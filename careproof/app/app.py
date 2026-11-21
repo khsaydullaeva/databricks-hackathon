@@ -75,16 +75,23 @@ def citation(item):
     urls = source_links(item.get("source_urls_raw"))
     leads = ""
     if urls:
-        links = "".join(
-            f'<a href="{escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">Lead {i} ↗</a>'
-            for i, url in enumerate(urls, 1)
-        )
+        groups = []
+        for start in range(0, len(urls), 10):
+            batch = urls[start:start + 10]
+            links = "".join(
+                f'<li><a href="{escape(url, quote=True)}" target="_blank" '
+                f'rel="noopener noreferrer">{escape(url)}</a></li>' for url in batch
+            )
+            page = f'<ul class="cp-links">{links}</ul>'
+            if len(urls) > 10:
+                page = f'<details><summary>Links {start + 1}–{start + len(batch)}</summary>{page}</details>'
+            groups.append(page)
         leads = (f'<details class="cp-leads"><summary>Unverified source leads ({len(urls)})</summary>'
-                 f'<div class="cp-links">{links}</div></details>')
+                 f'{"".join(groups)}</details>')
     availability = status if urls or item.get("source_attribution_status") != "unverified_row_leads" else (
         f"{status} · No usable web links"
     )
-    st.html(f'<div class="cp-citation"><blockquote>{escape(item["claim_text"])}</blockquote>'
+    st.html(f'<div class="cp-citation"><p>Exact claim excerpt</p><blockquote>{escape(item["claim_text"])}</blockquote>'
             f'<p>{escape(provenance)}<br>{escape(availability)}</p>{leads}</div>')
 
 
@@ -111,6 +118,8 @@ def show_evidence(rows, service, scope):
                            f"{claim['verification_reason'].replace('_', ' ')}")
                 citation(claim)
                 st.caption("Full recorded field")
+                st.caption("The excerpt above is the individual claim. The surrounding record can contain "
+                           "inconsistent or unrelated statements and can affect facility attribution.")
                 st.text(claim["source_text"])
         if len(claims) > EVIDENCE_PAGE:
             st.caption(f"More claims are available on page {page + 1}.")
@@ -241,6 +250,28 @@ def form():
     return submitted, choice, query
 
 
+def show_assessment(assessment):
+    if assessment is None:
+        return
+    claim_labels = {"candidate_claim": "offering cue detected", "mention_only": "service mention",
+                    "negated": "service denied", "uncertain": "uncertain extraction"}
+    kind = assessment["claim_type"]
+    st.caption("Claim screening · " + claim_labels.get(kind, kind or "unknown"))
+    if assessment["claim_reason"] == "no_explicit_offering_cue":
+        st.caption("The extraction rule found the service term but did not match an offering phrase for it.")
+    count = assessment["identity_review_count"]
+    clear = assessment["clear_identity_review_count"]
+    if count is not None and clear is not None:
+        st.caption(f"Dataset identity checks · {clear} clear out of {count}. A clear check reflects the recorded data.")
+    if assessment["has_service_negation"] is not None:
+        st.caption("A service denial was detected in this record." if assessment["has_service_negation"]
+                   else "The rules detected no explicit denial for this service in the record.")
+    for code in assessment["identity_reason_codes"] or []:
+        st.text(f"Identity flag · {code}")
+    if assessment["verification_reason"]:
+        st.text(f"Assessment reason · {assessment['verification_reason']}")
+
+
 def show_trace(trace, label):
     with st.expander("How CareProof reached this result"):
         request, geo = trace["request"], trace["geography"]
@@ -258,13 +289,15 @@ def show_trace(trace, label):
             st.text("Matching places · " + " / ".join(map(choice_label, geo["choices"])))
         for code, count in geo["coordinate_exclusions"].items():
             st.text(f"{code.replace('_', ' ').capitalize()} · {count}")
-        if not assumptions:
-            st.caption("Location matching stopped before the ranker could assess candidates.")
+        if not assumptions or geo["choices"]:
+            st.caption("Location matching stopped before the ranker could assess candidates for this search.")
         st.markdown("**3. Candidate retrieval**")
         st.write(f"{retrieval['gold_rows']} Gold rows for the service before geographic filtering. "
                  f"The app supplied {retrieval['address_rows']} distinct Gold address records for place resolution.")
         st.markdown("**4. Claim evidence and conflicts**")
-        st.caption("Evidence states come from dataset claim assessment. Source URLs are unverified leads.")
+        st.caption("These states were assigned to the retrieved Gold claims before this search. "
+                   "The ranker screens matching records for a grounded offering, facility attribution, and location. "
+                   "Source URLs are unverified leads.")
         for state, count in sorted(assessed["retrieved_states"].items()):
             st.text(f"Retrieved · {state.replace('_', ' ')} · {count}")
         for reason, count in sorted(assessed["review_reasons"].items()):
@@ -275,9 +308,20 @@ def show_trace(trace, label):
             if selected is not None:
                 lead = leads[selected]
                 show_reasons(lead)
+                show_assessment(trace["assessment"].get(lead["facility_id"]))
                 if lead.get("citation"):
                     citation(lead["citation"])
         st.markdown("**5. Ranking calculations**")
+        if trace["scoring"]:
+            policy = trace["scoring"]
+            weights = " · ".join(f"{field.title()} {points}" for field, points in
+                                 policy["evidence_points_by_source_field"].items())
+            st.text(f"Evidence points by recorded field · {weights}")
+            st.caption("These are fixed heuristic field weights. Their relative values have no empirical "
+                       "calibration in the project evidence.")
+            st.caption(policy["address_consistency"])
+            st.caption(policy["proximity"])
+            st.caption(f"Highest total ranks first. Equal totals use {policy['tie_breaker'].rstrip('.').lower()}.")
         if trace["ranking"]:
             ranked = {f"{heading(row)} · {row['facility_id']}": row for row in trace["ranking"]}
             row = ranked[st.selectbox("Inspect ranked evidence and score", list(ranked))]
@@ -288,6 +332,7 @@ def show_trace(trace, label):
             st.write(f'{row["score"]:g} total · evidence {points["evidence"]:g} · '
                      f'proximity {points["proximity"]:g} · address consistency {points["address_consistency"]:g}')
             st.caption(geography_detail(row, assumptions))
+            show_assessment(trace["assessment"].get(row["facility_id"]))
             citation(row["citation"])
         else:
             st.caption("The ranker returned no eligible candidates to score.")
@@ -324,7 +369,7 @@ def main():
                                 border-left: .2rem solid #79a69d; padding: .15rem .7rem;}
         .cp-leads {margin-top: .4rem; font-size: .875rem;}
         .cp-leads summary {cursor: pointer;}
-        .cp-links {display: flex; flex-wrap: wrap; gap: .15rem .8rem; padding: .4rem 0;}
+        .cp-links {overflow-wrap: anywhere; padding-left: 1.2rem;}
         </style>""")
     st.title("CareProof")
     st.markdown("### Find facilities by service and location")
@@ -374,6 +419,7 @@ def main():
     assumptions = result["distance_assumptions"] or {}
     if assumptions:
         st.caption(assumptions["note"])
+    show_trace(result["decision_trace"], label)
     if ranked:
         st.subheader(f"Dataset-supported facilities ({len(ranked)})")
         st.caption("Ranking points reflect evidence field, address consistency, and proximity when available. "
@@ -386,7 +432,6 @@ def main():
             st.caption("Review these leads for conflicting claims, weak attribution, or incomplete location information.")
             show_group(reviews, result["service_key"], "verification", assumptions)
     comparison(ranked, reviews, assumptions)
-    show_trace(result["decision_trace"], label)
 
 
 if __name__ == "__main__":

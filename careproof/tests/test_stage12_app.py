@@ -309,3 +309,68 @@ def test_ui_decision_trace(ui):
     assert any(item.value == "2 ranked · 11 require verification" for item in trace.markdown)
     headings = [item.value for item in trace.markdown if item.value[:3] in {f"**{i}" for i in range(1, 7)}]
     assert len(headings) == 6
+
+
+def test_jaipur_dialysis_trace_audits_scores_and_record_conflict(capture):
+    from app.decision_trace import build_trace
+    from careproof.recommend import EVIDENCE_POINTS
+
+    rows = [row for row in capture if row["service_key"] == "dialysis"]
+    query = {"service": "dialysis", "location": {"city": "Jaipur"}}
+    result = search(query, [], rows)
+    trace = build_trace(query, [], rows, result)
+    assert trace["scoring"]["evidence_points_by_source_field"] == EVIDENCE_POINTS
+    liberty, scr = trace["ranking"]
+    for item, field, score in ((liberty, "capability", 70), (scr, "procedure", 68)):
+        gold = next(row for row in rows if row["facility_id"] == item["facility_id"])
+        assert item["citation"]["source_field"] == field
+        assert item["citation"]["claim_text"] == "Provides dialysis services"
+        assert citation_matches(item, gold)
+        assert item["score_components"] == {"evidence": EVIDENCE_POINTS[field],
+                                            "address_consistency": 10, "proximity": 0}
+        assert item["score"] == score and item["distance_km"] is None
+        assessment = trace["assessment"][item["facility_id"]]
+        assert assessment["identity_review_count"] == assessment["clear_identity_review_count"] == 1
+        assert assessment["identity_reason_codes"] == []
+    cks = next(row for row in trace["evidence"]["review_leads"] if row["name"] == "CKS Hospital")
+    gold = next(row for row in rows if row["facility_id"] == cks["facility_id"])
+    assert citation_matches(cks, gold)
+    assert "RS Hospital" in gold["bronze_records"][0]["capability"]
+    assert "evidence_conflicting" in cks["reason_codes"]
+    assessment = trace["assessment"][cks["facility_id"]]
+    assert assessment["verification_reason"] == "text_mentions_other_facility_or_branch"
+    assert assessment["identity_reason_codes"] == [assessment["verification_reason"]]
+    assert assessment["claim_reason"] == "no_explicit_offering_cue"
+    assert assessment["has_service_negation"] is False
+    assert "score" not in cks
+
+
+@pytest.mark.parametrize("service,city,message", [
+    ("Dialysis", "Hyderabad", "ambiguous place"),
+    ("Cardiac surgery", "Jaipur", "no reliable match"),
+])
+def test_ui_trace_on_unranked_paths(ui, service, city, message):
+    app, _ = ui
+    app.run()
+    app.selectbox[0].select(service)
+    app.text_input[0].input(city)
+    app.button[0].click().run()
+    assert not app.exception
+    trace = next(item for item in app.expander if item.label == "How CareProof reached this result")
+    assert any(item.value == f"Abstained · {message}" for item in trace.text)
+    assert sum(item.value.startswith("**") for item in trace.markdown) == 6
+
+
+def test_ui_trace_shows_policy_and_selected_conflict(ui):
+    app, _ = ui
+    app.run()
+    app.text_input[0].input("Jaipur")
+    app.button[0].click().run()
+    trace = next(item for item in app.expander if item.label == "How CareProof reached this result")
+    assert any("Capability 60 · Procedure 58" in item.value for item in trace.text)
+    lead = next(item for item in trace.selectbox if item.label == "Inspect verification lead")
+    lead.select(next(option for option in lead.options if option.startswith("CKS Hospital ·"))).run()
+    assert not app.exception
+    trace = next(item for item in app.expander if item.label == "How CareProof reached this result")
+    assert any("Assessment reason · text_mentions_other_facility_or_branch" == item.value for item in trace.text)
+    assert any("no explicit denial" in item.value for item in trace.caption)

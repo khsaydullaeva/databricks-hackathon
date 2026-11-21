@@ -17,7 +17,7 @@ ADDRESS = "city_clean, state_clean, district_clean, pin_clean, pin_status"
 GOLD_FIELDS = f"""facility_id, service_key, name, {ADDRESS},
     geo_facility_id, geo_status, admin_status, pin_state_disagreement,
     country_disagreement, candidate_latitude, candidate_longitude,
-    coordinate_provenance, evidence_status, claim_type, has_service_negation,
+    coordinate_provenance, evidence_status, claim_type, claim_reason, has_service_negation,
     identity_review_count, clear_identity_review_count, identity_reason_codes,
     verification_reason, source_field, claim_text, source_text, source_content_id,
     matched_aliases, source_urls_raw, source_attribution_status"""
