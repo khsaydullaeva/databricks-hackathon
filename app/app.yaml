@@ -1,0 +1,11 @@
+command: ["streamlit", "run", "app.py"]
+env:
+  # Add a SQL warehouse resource to the app with resource key "sql-warehouse"
+  - name: DATABRICKS_WAREHOUSE_ID
+    valueFrom: sql-warehouse
+  - name: FINDCARE_CATALOG
+    value: workspace
+  - name: FINDCARE_SCHEMA
+    value: findcare
+  - name: STREAMLIT_BROWSER_GATHER_USAGE_STATS
+    value: "false"
