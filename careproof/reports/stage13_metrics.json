@@ -1,0 +1,262 @@
+{
+  "inputs_sha256": {
+    "02_profile.json": "a9fb1f90c4bd1385890c59bf0d5d96f97d33847b85098e57128fe28ae3d77324",
+    "real_data_capture.json": "f3312d4096efb27f2d97d131a111255a56b6bb764960b28e089eef20b36d0880",
+    "location_resolution_live_before_after.json": "fa5aa9805dc0b5a9d635d015dd02d4e52b15327ddc0cae0cf04ef0a981b44f14",
+    "11_evaluation.json": "6d0007e5e3990416710574cf79eeba2f23b1b7806a189fa9f214985ef70c29cf"
+  },
+  "bronze": {
+    "total_rows": 10088,
+    "column_count": 51,
+    "generated_at_utc": "2026-11-21T19:28:44.081934+00:00",
+    "null_counts": {
+      "acceptsVolunteers": 10046,
+      "address_city": 64,
+      "address_country": 59,
+      "address_countryCode": 59,
+      "address_line1": 69,
+      "address_line2": 285,
+      "address_line3": 3050,
+      "address_stateOrRegion": 63,
+      "address_zipOrPostcode": 66,
+      "affiliated_staff_presence": 129,
+      "affiliationTypeIds": 8839,
+      "area": 9959,
+      "capability": 122,
+      "capacity": 7568,
+      "cluster_id": 118,
+      "content_table_id": 62,
+      "coordinates": 117,
+      "countries": 10060,
+      "custom_logo_presence": 477,
+      "description": 82,
+      "distinct_social_media_presence_count": 122,
+      "email": 1518,
+      "engagement_metrics_n_engagements": 5200,
+      "engagement_metrics_n_followers": 1203,
+      "engagement_metrics_n_likes": 2287,
+      "equipment": 225,
+      "facebookLink": 192,
+      "facilityTypeId": 126,
+      "latitude": 118,
+      "longitude": 118,
+      "name": 65,
+      "numberDoctors": 6455,
+      "number_of_facts_about_the_organization": 7331,
+      "officialPhone": 564,
+      "officialWebsite": 1667,
+      "operatorTypeId": 761,
+      "organization_type": 61,
+      "phone_numbers": 340,
+      "post_metrics_most_recent_social_media_post_date": 5156,
+      "post_metrics_post_count": 6303,
+      "procedure": 146,
+      "recency_of_page_update": 6542,
+      "source": 117,
+      "source_content_id": 69,
+      "source_ids": 87,
+      "source_types": 78,
+      "source_urls": 118,
+      "specialties": 116,
+      "unique_id": 0,
+      "websites": 61,
+      "yearEstablished": 5284
+    },
+    "geography": {
+      "inside_india_bbox": 9964,
+      "invalid_pin": 256,
+      "missing_coordinates": 118,
+      "non_finite_coordinates": 0,
+      "outside_global_range": 0,
+      "outside_india_bbox": 6
+    },
+    "duplicate_ids": 11,
+    "json_parse_failures": {
+      "capability": 3,
+      "equipment": 3,
+      "procedure": 2,
+      "source_urls": 0,
+      "specialties": 2
+    }
+  },
+  "capture": {
+    "rows": 646,
+    "collected_at_utc": "2026-11-21T20:09:35.637037+00:00",
+    "claim_type": {
+      "mention_only": 497,
+      "candidate_claim": 135,
+      "uncertain": 11,
+      "negated": 3
+    },
+    "evidence_status": {
+      "conflicting": 207,
+      "uncertain": 351,
+      "supported_claim": 85,
+      "rejected": 3
+    },
+    "source_field": {
+      "equipment": 78,
+      "capability": 409,
+      "procedure": 147,
+      "description": 11,
+      "specialties": 1
+    },
+    "source_attribution_status": {
+      "unverified_row_leads": 646
+    },
+    "geo_status": {
+      "bbox_pass": 628,
+      "unresolved_geography": 11,
+      "outside_india_bbox": 7
+    },
+    "admin_status": {
+      "dataset_address_unverified": 534,
+      "possible_admin_conflict": 101,
+      "unresolved_geography": 11
+    },
+    "verification_reason": {
+      "text_mentions_other_facility_or_branch": 207,
+      "mention_without_offering": 278,
+      "facility_identity_needs_review": 63,
+      "attributable_dataset_offering_text": 85,
+      "explicit_negation": 3,
+      "multiple_identity_reviews": 10
+    },
+    "pin_status": {
+      "format_valid_unverified": 618,
+      "invalid_format": 17,
+      "unresolved_geography": 11
+    }
+  },
+  "location_audit": {
+    "before": {
+      "executions": 36,
+      "ranked": 7,
+      "abstained": 29,
+      "ambiguous_place": 24,
+      "no_reliable_match": 5,
+      "recommendation_placements": 16,
+      "verification_required_placements": 135
+    },
+    "after": {
+      "executions": 36,
+      "ranked": 20,
+      "abstained": 16,
+      "ambiguous_place": 0,
+      "no_reliable_match": 16,
+      "recommendation_placements": 57,
+      "verification_required_placements": 512
+    },
+    "normalized_city_only": {
+      "executions": 36,
+      "ranked": 20,
+      "abstained": 16,
+      "ambiguous_place": 0,
+      "no_reliable_match": 16,
+      "recommendation_placements": 57,
+      "verification_required_placements": 512
+    },
+    "after_execution_mode": "fresh_databricks_export",
+    "after_source_collected_at_utc": "2026-11-21T20:24:40.972262+00:00",
+    "postal_pins_loaded": 0,
+    "ranked_checks": 57,
+    "ranked_exact_record_matches": 57,
+    "ranked_address_checks_passed": 57,
+    "failed_checks": 0
+  },
+  "service_breakdown": {
+    "cardiac_surgery": {
+      "capture_evidence_states": {
+        "uncertain": 21,
+        "conflicting": 26,
+        "supported_claim": 9
+      },
+      "executions": 6,
+      "ranked": 2,
+      "abstained": 4,
+      "recommendation_placements": 4,
+      "verification_required_placements": 33
+    },
+    "dialysis": {
+      "capture_evidence_states": {
+        "conflicting": 43,
+        "uncertain": 56,
+        "supported_claim": 27,
+        "rejected": 2
+      },
+      "executions": 6,
+      "ranked": 6,
+      "abstained": 0,
+      "recommendation_placements": 17,
+      "verification_required_placements": 91
+    },
+    "emergency_c_section": {
+      "capture_evidence_states": {
+        "conflicting": 2,
+        "supported_claim": 1,
+        "uncertain": 2
+      },
+      "executions": 6,
+      "ranked": 0,
+      "abstained": 6,
+      "recommendation_placements": 0,
+      "verification_required_placements": 0
+    },
+    "mri": {
+      "capture_evidence_states": {
+        "conflicting": 45,
+        "supported_claim": 28,
+        "uncertain": 56,
+        "rejected": 1
+      },
+      "executions": 6,
+      "ranked": 6,
+      "abstained": 0,
+      "recommendation_placements": 26,
+      "verification_required_placements": 93
+    },
+    "nicu": {
+      "capture_evidence_states": {
+        "conflicting": 29,
+        "uncertain": 61,
+        "supported_claim": 8
+      },
+      "executions": 6,
+      "ranked": 1,
+      "abstained": 5,
+      "recommendation_placements": 2,
+      "verification_required_placements": 82
+    },
+    "trauma_emergency_care": {
+      "capture_evidence_states": {
+        "conflicting": 62,
+        "uncertain": 155,
+        "supported_claim": 12
+      },
+      "executions": 6,
+      "ranked": 5,
+      "abstained": 1,
+      "recommendation_placements": 8,
+      "verification_required_placements": 213
+    }
+  },
+  "synthetic": {
+    "evidence_basis": "Manually labeled synthetic Gold-shaped cases. Measures ranker behavior under controlled inputs. Live source evaluation and human source review are pending.",
+    "case_count": 40,
+    "manual_source_review_count": 0,
+    "labels": {
+      "positive": 7,
+      "negative": 12,
+      "conflict": 8,
+      "unknown": 13
+    },
+    "cases_with_recommendations": 7,
+    "recommended_candidate_count": 7,
+    "precision_among_recommended": 1.0,
+    "coverage": 0.175,
+    "abstention_rate": 0.825,
+    "unexpected_asserted_positives": 0,
+    "failed_cases": 0,
+    "failure_categories": {}
+  }
+}

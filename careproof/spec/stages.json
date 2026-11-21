@@ -1,0 +1,193 @@
+{
+  "project": "CareProof",
+  "stage_count": 14,
+  "source_table": "databricks_virtue_foundation_dataset_dais_2026.virtue_foundation_dataset.facilities",
+  "stages": [
+    {
+      "id": "00",
+      "name": "Workspace and schema",
+      "depends_on": [],
+      "implementation_target": "sql/00_workspace.sql",
+      "acceptance_criteria": [
+        "Readable source, 10,088 rows",
+        "Writable target schema exists",
+        "No write to Marketplace catalog"
+      ]
+    },
+    {
+      "id": "01",
+      "name": "Bronze snapshot",
+      "depends_on": [
+        "00"
+      ],
+      "implementation_target": "sql/01_bronze.sql",
+      "acceptance_criteria": [
+        "Bronze row count matches source",
+        "Column count matches the source (51)",
+        "Source-to-bronze multiset comparison is empty"
+      ]
+    },
+    {
+      "id": "02",
+      "name": "Data profiling",
+      "depends_on": [
+        "01"
+      ],
+      "implementation_target": "sql/02_profile.sql / reports/02_profile.json",
+      "acceptance_criteria": [
+        "Report exists as reports/02_profile.json",
+        "Per-field missingness, invalid JSON, ID duplicates, coordinate anomalies measured",
+        "Report row count is live-verified"
+      ]
+    },
+    {
+      "id": "03",
+      "name": "Silver cleaning",
+      "depends_on": [
+        "02"
+      ],
+      "implementation_target": "sql/03_silver.sql / workspace.careproof.silver_facilities",
+      "acceptance_criteria": [
+        "All raw records represented",
+        "Original columns and unique_id preserved",
+        "Parsed JSON arrays, normalized names, and explicit geo flags",
+        "No material changes to raw source"
+      ]
+    },
+    {
+      "id": "04",
+      "name": "Facility identity",
+      "depends_on": [
+        "03"
+      ],
+      "implementation_target": "sql/04_identity.sql / workspace.careproof.identity_review",
+      "acceptance_criteria": [
+        "All facility IDs covered by identity review",
+        "Duplicate candidates and mixed-hospital claims flagged, not silently merged",
+        "Each flagged item has an explicit reason"
+      ]
+    },
+    {
+      "id": "05",
+      "name": "Geography",
+      "depends_on": [
+        "03"
+      ],
+      "implementation_target": "sql/05_geography.sql / workspace.careproof.geo_facilities",
+      "acceptance_criteria": [
+        "Exactly one geography row per facility",
+        "Missing/out-of-bounds coordinates explicitly flagged",
+        "PIN joins avoid post-office fan-out; distance is geodesic, not driving time"
+      ]
+    },
+    {
+      "id": "06",
+      "name": "Medical service taxonomy",
+      "depends_on": [
+        "03"
+      ],
+      "implementation_target": "sql/06_taxonomy.sql / workspace.careproof.service_taxonomy",
+      "acceptance_criteria": [
+        "At least six canonical medical services and normalized synonyms",
+        "Negation and mention-only semantics designed",
+        "Aliases are not automatically proof of availability"
+      ]
+    },
+    {
+      "id": "07",
+      "name": "Evidence extraction",
+      "depends_on": [
+        "06"
+      ],
+      "implementation_target": "sql/07_claims.sql / workspace.careproof.service_claims",
+      "acceptance_criteria": [
+        "Claims have facility, canonical service, source field and exact supporting text",
+        "No fabricated excerpts or URLs",
+        "Claims are attributable to original record and field"
+      ]
+    },
+    {
+      "id": "08",
+      "name": "Evidence verification",
+      "depends_on": [
+        "04",
+        "07"
+      ],
+      "implementation_target": "sql/08_verification.sql / workspace.careproof.verified_claims",
+      "acceptance_criteria": [
+        "Each claim has a non-overstated status and reason",
+        "Cross-facility/mixed-branch indicators considered",
+        "No false independent verification based on a URL list alone"
+      ]
+    },
+    {
+      "id": "09",
+      "name": "Gold search index",
+      "depends_on": [
+        "05",
+        "08"
+      ],
+      "implementation_target": "sql/09_gold.sql / workspace.careproof.gold_service_index",
+      "acceptance_criteria": [
+        "At most one record per facility and service",
+        "Contains traceable evidence + geography flags",
+        "Searchable medical service and location fields"
+      ]
+    },
+    {
+      "id": "10",
+      "name": "Explainable ranking",
+      "depends_on": [
+        "09"
+      ],
+      "implementation_target": "careproof/recommend.py / tests/test_recommend.py",
+      "acceptance_criteria": [
+        "Deterministic, inspectable ranking",
+        "Blocks or clearly separates conflicting/weak claims",
+        "Returns scores, distance assumptions, citation snippets and abstention",
+        "Unit tests pass"
+      ]
+    },
+    {
+      "id": "11",
+      "name": "Evaluation",
+      "depends_on": [
+        "10"
+      ],
+      "implementation_target": "reports/11_evaluation.json / tests/",
+      "acceptance_criteria": [
+        "Manual case-based evaluation with positive, negative and conflict examples",
+        "No ungrounded availability claims; serious false recommendations blocked",
+        "Reproducible metrics and pytest suite"
+      ]
+    },
+    {
+      "id": "12",
+      "name": "Streamlit application",
+      "depends_on": [
+        "11"
+      ],
+      "implementation_target": "app/app.py / app/app.yaml",
+      "acceptance_criteria": [
+        "Non-technical service+location workflow",
+        "Renders evidence text, sources, warnings and alternative recommendations",
+        "Local app smoke test; actual Databricks Apps deployment verified",
+        "Deployment requires explicit user authorization"
+      ]
+    },
+    {
+      "id": "13",
+      "name": "Final validation",
+      "depends_on": [
+        "12"
+      ],
+      "implementation_target": "reports/13_final.json",
+      "acceptance_criteria": [
+        "Re-run all stage gates on current artifacts",
+        "Prove public/authorized app is reachable and queries real Gold data",
+        "Record 3 realistic demos and data provenance",
+        "Explicit --approve-final user signoff for clinical uncertainty messaging"
+      ]
+    }
+  ]
+}

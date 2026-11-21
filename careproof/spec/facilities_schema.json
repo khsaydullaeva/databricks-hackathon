@@ -1,0 +1,210 @@
+{
+  "source_table": "databricks_virtue_foundation_dataset_dais_2026.virtue_foundation_dataset.facilities",
+  "total_columns": 51,
+  "columns": [
+    {
+      "name": "unique_id",
+      "type": "string"
+    },
+    {
+      "name": "source_types",
+      "type": "string"
+    },
+    {
+      "name": "source_ids",
+      "type": "string"
+    },
+    {
+      "name": "source_content_id",
+      "type": "string"
+    },
+    {
+      "name": "name",
+      "type": "string"
+    },
+    {
+      "name": "organization_type",
+      "type": "string"
+    },
+    {
+      "name": "content_table_id",
+      "type": "string"
+    },
+    {
+      "name": "phone_numbers",
+      "type": "string"
+    },
+    {
+      "name": "officialPhone",
+      "type": "string"
+    },
+    {
+      "name": "email",
+      "type": "string"
+    },
+    {
+      "name": "websites",
+      "type": "string"
+    },
+    {
+      "name": "officialWebsite",
+      "type": "string"
+    },
+    {
+      "name": "yearEstablished",
+      "type": "string"
+    },
+    {
+      "name": "acceptsVolunteers",
+      "type": "string"
+    },
+    {
+      "name": "facebookLink",
+      "type": "string"
+    },
+    {
+      "name": "address_line1",
+      "type": "string"
+    },
+    {
+      "name": "address_line2",
+      "type": "string"
+    },
+    {
+      "name": "address_line3",
+      "type": "string"
+    },
+    {
+      "name": "address_city",
+      "type": "string"
+    },
+    {
+      "name": "address_stateOrRegion",
+      "type": "string"
+    },
+    {
+      "name": "address_zipOrPostcode",
+      "type": "string"
+    },
+    {
+      "name": "address_country",
+      "type": "string"
+    },
+    {
+      "name": "address_countryCode",
+      "type": "string"
+    },
+    {
+      "name": "countries",
+      "type": "string"
+    },
+    {
+      "name": "facilityTypeId",
+      "type": "string"
+    },
+    {
+      "name": "operatorTypeId",
+      "type": "string"
+    },
+    {
+      "name": "affiliationTypeIds",
+      "type": "string"
+    },
+    {
+      "name": "description",
+      "type": "string"
+    },
+    {
+      "name": "area",
+      "type": "string"
+    },
+    {
+      "name": "numberDoctors",
+      "type": "string"
+    },
+    {
+      "name": "capacity",
+      "type": "string"
+    },
+    {
+      "name": "specialties",
+      "type": "string"
+    },
+    {
+      "name": "procedure",
+      "type": "string"
+    },
+    {
+      "name": "equipment",
+      "type": "string"
+    },
+    {
+      "name": "capability",
+      "type": "string"
+    },
+    {
+      "name": "recency_of_page_update",
+      "type": "string"
+    },
+    {
+      "name": "distinct_social_media_presence_count",
+      "type": "string"
+    },
+    {
+      "name": "affiliated_staff_presence",
+      "type": "string"
+    },
+    {
+      "name": "custom_logo_presence",
+      "type": "string"
+    },
+    {
+      "name": "number_of_facts_about_the_organization",
+      "type": "string"
+    },
+    {
+      "name": "post_metrics_most_recent_social_media_post_date",
+      "type": "string"
+    },
+    {
+      "name": "post_metrics_post_count",
+      "type": "string"
+    },
+    {
+      "name": "engagement_metrics_n_followers",
+      "type": "string"
+    },
+    {
+      "name": "engagement_metrics_n_likes",
+      "type": "string"
+    },
+    {
+      "name": "engagement_metrics_n_engagements",
+      "type": "string"
+    },
+    {
+      "name": "source",
+      "type": "string"
+    },
+    {
+      "name": "coordinates",
+      "type": "string"
+    },
+    {
+      "name": "latitude",
+      "type": "double"
+    },
+    {
+      "name": "longitude",
+      "type": "double"
+    },
+    {
+      "name": "cluster_id",
+      "type": "string"
+    },
+    {
+      "name": "source_urls",
+      "type": "string"
+    }
+  ]
+}
