@@ -120,10 +120,10 @@ class Warehouse:
         """, service=service, facility=facility, offset=offset)
 
 
-def search(query, addresses, service_rows):
+def search(query, addresses, service_rows, *, audit=None):
     # Address-only rows never qualify as service candidates. They preserve
     # cross-service place disambiguation without loading irrelevant claim text.
-    return recommend(query, [*addresses, *service_rows])
+    return recommend(query, [*addresses, *service_rows], audit=audit)
 
 
 def source_links(raw):

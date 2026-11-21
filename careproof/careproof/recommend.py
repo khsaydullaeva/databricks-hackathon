@@ -164,7 +164,7 @@ def _location_assessment(row, kind, origin, radius):
     return distance, "outside_radius" if distance > radius else None
 
 
-def recommend(query, rows, *, postal_offices=()):
+def recommend(query, rows, *, postal_offices=(), audit=None):
     """Return JSON-ready recommendations, review candidates and abstention reasons.
 
     Supply complete Stage 09 rows as mappings, including other services when
@@ -172,7 +172,10 @@ def recommend(query, rows, *, postal_offices=()):
     city/district, pin, or latitude/longitude mapping. Radius is in km and
     applies to coordinate searches. Optional postal office mappings contain
     pin, state and district. Unknown input produces an abstention.
+    If provided, audit is populated with measurements from the executed stages.
     """
+    if audit is not None:
+        audit.clear()
     service = _service_key(query.get("service"))
     result = {
         "status": "abstain", "reason": None, "service_key": service,
@@ -202,6 +205,8 @@ def recommend(query, rows, *, postal_offices=()):
         {"method": "dataset_address_exact_match", "coordinate_distance_computed": False,
          "note": "The dataset address is unverified. No location is inferred from a place name or PIN."}
     )
+    if audit is not None:
+        audit["parsed_location"] = {"mode": kind, "value": value, "state": state, "district": district}
     rows = list(rows)
     post = postal_index(postal_offices)
     addresses = {id(row): address(row, post) for row in rows}
@@ -218,6 +223,8 @@ def recommend(query, rows, *, postal_offices=()):
                 kind = "city" if "city" in choice else "district"
             district = choice.get("district", "") if kind == "city" else ""
         elif not state:
+            if audit is not None:
+                audit["stop_reason"] = "no_unambiguous_indexed_place"
             result["reason"] = "no_reliable_match"
             return result
         if kind == "place":
@@ -238,20 +245,42 @@ def recommend(query, rows, *, postal_offices=()):
             ])
             return result
 
+    if audit is not None:
+        audit.update(location={"mode": kind, "value": value, "state": state, "district": district},
+                     service_rows=0, invalid_id_rows=0, duplicate_rows=0,
+                     unique_service_facilities=0, geographic_rows=0, geographic_facilities=0,
+                     assessed_facilities=0, duplicates_held_before_range=0,
+                     unmatched_address_facilities=0, screenings={})
     by_facility = defaultdict(list)
     for row in rows:
         facility_id = row.get("facility_id")
-        if row.get("service_key") == service and isinstance(facility_id, str) and facility_id.strip():
-            if row not in by_facility[facility_id]:
-                by_facility[facility_id].append(row)
+        if row.get("service_key") == service:
+            if audit is not None:
+                audit["service_rows"] += 1
+            if isinstance(facility_id, str) and facility_id.strip():
+                if row not in by_facility[facility_id]:
+                    by_facility[facility_id].append(row)
+                elif audit is not None:
+                    audit["duplicate_rows"] += 1
+            elif audit is not None:
+                audit["invalid_id_rows"] += 1
 
+    if audit is not None:
+        audit["unique_service_facilities"] = len(by_facility)
     excluded = Counter()
     for facility_id, records in sorted(by_facility.items()):
         matching = [row for row in records if kind == "coordinates"
                     or matches(row, addresses[id(row)], kind, value, state, district)]
         if not matching:
+            if audit is not None:
+                audit["unmatched_address_facilities"] += 1
             continue
         if len(records) > 1:
+            if audit is not None and kind == "coordinates":
+                audit["duplicates_held_before_range"] += 1
+            if audit is not None and kind != "coordinates":
+                audit["geographic_rows"] += len(matching)
+                audit["geographic_facilities"] += 1
             result["verification_required"].append({
                 "facility_id": facility_id, "reason_codes": ["inconsistent_gold_rows"],
             })
@@ -262,6 +291,10 @@ def recommend(query, rows, *, postal_offices=()):
         if kind == "coordinates" and location_issue:
             excluded[location_issue] += 1
             continue
+        if audit is not None:
+            audit["geographic_rows"] += 1
+            audit["geographic_facilities"] += 1
+            audit["assessed_facilities"] += 1
         citation = _citation(row)
         issues = _evidence_issues(row)
         if citation is None:
@@ -272,6 +305,18 @@ def recommend(query, rows, *, postal_offices=()):
         if admin["issue"]:
             issues.append(admin["issue"])
             distance = None
+        if audit is not None:
+            audit["screenings"][facility_id] = {
+                "location_issue": location_issue or admin["issue"],
+                "claim_type": row.get("claim_type"),
+                "claim_reason": row.get("claim_reason"),
+                "has_service_negation": row.get("has_service_negation"),
+                "identity_review_count": row.get("identity_review_count"),
+                "clear_identity_review_count": row.get("clear_identity_review_count"),
+                "identity_reason_codes": row.get("identity_reason_codes"),
+                "verification_reason": row.get("verification_reason"),
+                "source_text": row.get("source_text"),
+            }
         candidate = {
             "facility_id": facility_id, "name": row.get("name"),
             "evidence_status": row.get("evidence_status"),

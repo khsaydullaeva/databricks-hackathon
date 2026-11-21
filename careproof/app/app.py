@@ -9,7 +9,7 @@ APP = Path(__file__).resolve().parent
 if str(APP) not in sys.path:
     sys.path.insert(0, str(APP))
 from data import DataUnavailable, EVIDENCE_PAGE, connect, search, source_links
-from decision_trace import build_trace
+from decision_trace import build_trace, counterfactual, equal_weight_sensitivity, facility_checks
 
 SERVICES = {
     "Dialysis": "dialysis", "MRI": "mri", "NICU": "nicu",
@@ -169,9 +169,12 @@ def card(candidate, assumptions, position=None):
                 address = ("The index records a city and state without a flagged administrative conflict."
                            if points["address_consistency"] else "The index awarded no address consistency points.")
                 st.write(f'**Address consistency · {points["address_consistency"]:g} points.** {address}')
-                st.caption(f'{candidate["score"]:g} total ranking points. Confirm the offering and branch directly.')
+                st.caption(f'{candidate["score"]:g} total ranking points.')
+                st.caption("What should I verify? Confirm the current service, branch address and intake requirements.")
         else:
+            st.caption("Why withheld?")
             show_reasons(candidate)
+            st.caption("What should I verify? Confirm the named branch and resolve the listed issues before relying on the lead.")
 
 
 def show_group(rows, service, scope, assumptions):
@@ -211,6 +214,11 @@ def comparison(ranked, reviews, assumptions):
                        "Top result": value, "Alternative": other["score_components"][label]}
                       for label, value in top["score_components"].items()] +
                      [{"Component": "Total", "Top result": top["score"], "Alternative": other["score"]}])
+            differences = [label.replace("_", " ") for label, value in top["score_components"].items()
+                           if value != other["score_components"][label]]
+            if top["score"] != other["score"]:
+                st.caption(f'{top["score"] - other["score"]:g}-point difference from ' + ", ".join(differences)
+                           + ". Points reflect the ranking policy.")
             if top["score"] == other["score"]:
                 st.caption("Scores tied. The engine orders equal scores by facility record ID.")
         else:
@@ -272,6 +280,20 @@ def show_assessment(assessment):
         st.text(f"Assessment reason · {assessment['verification_reason']}")
 
 
+def show_facility_audit(candidate, trace, assumptions):
+    assessment = trace["assessment"].get(candidate["facility_id"])
+    st.text("Decision checks · " + " / ".join(
+        f"{label}: {status}" for label, status in facility_checks(candidate, assessment)))
+    show_assessment(assessment)
+    if assessment and assessment["location_issue"]:
+        st.text(f"Geography reason · {assessment['location_issue']}")
+    if candidate["reason_codes"]:
+        st.text("Rules that withheld this record · " + ", ".join(candidate["reason_codes"]))
+    st.markdown("**What would change this decision?**")
+    for note in counterfactual(candidate, assumptions):
+        st.caption(note)
+
+
 def show_trace(trace, label):
     with st.expander("How CareProof reached this result"):
         request, geo = trace["request"], trace["geography"]
@@ -289,12 +311,37 @@ def show_trace(trace, label):
             st.text("Matching places · " + " / ".join(map(choice_label, geo["choices"])))
         for code, count in geo["coordinate_exclusions"].items():
             st.text(f"{code.replace('_', ' ').capitalize()} · {count}")
-        if not assumptions or geo["choices"]:
+        normalized = geo["normalized"]
+        if normalized:
+            st.text("Normalized location · " + " · ".join(
+                f"{key} {value}" for key, value in normalized.items() if value))
+        if not trace["funnel"]:
             st.caption("Location matching stopped before the ranker could assess candidates for this search.")
+        if geo["stop_reason"] == "no_unambiguous_indexed_place":
+            st.caption("The place lookup found no reliable recorded match. Try specifying a state or union territory.")
         st.markdown("**3. Candidate retrieval**")
         st.write(f"{retrieval['gold_rows']} Gold rows for the service before geographic filtering. "
                  f"The app supplied {retrieval['address_rows']} distinct Gold address records for place resolution.")
+        funnel = trace["funnel"]
+        if funnel:
+            st.text(f'{funnel["service_rows"]} service-matched rows across the index · '
+                    f'{funnel["invalid_id_rows"]} unusable IDs · {funnel["duplicate_rows"]} exact duplicates')
+            st.text(f'{funnel["unique_service_facilities"]} distinct facility IDs across the service · '
+                    f'{funnel["unmatched_address_facilities"]} outside the recorded address match')
+            st.text(f'{funnel["geographic_rows"]} deduplicated rows across {funnel["geographic_facilities"]} '
+                    'facility IDs passed the address or coordinate-radius filter.')
+            if funnel["duplicates_held_before_range"]:
+                st.text(f'{funnel["duplicates_held_before_range"]} facility IDs held before radius checks due to competing rows.')
+            st.caption("The geographic filter precedes final attribution and address-quality checks. "
+                       "A recorded location match is provisional.")
         st.markdown("**4. Claim evidence and conflicts**")
+        if funnel:
+            st.text(f'{funnel["assessed_facilities"]} single-row facilities reached evidence screening.')
+            for check, label in (("identity", "Identity review"), ("offering", "Offering cue")):
+                st.text(label + " · " + " · ".join(
+                    f"{state} {count}" for state, count in sorted(funnel[check].items())) if funnel[check]
+                    else f"{label} · NOT EVALUATED")
+        st.caption("Verification reasons can overlap for the same facility.")
         st.caption("These states were assigned to the retrieved Gold claims before this search. "
                    "The ranker screens matching records for a grounded offering, facility attribution, and location. "
                    "Source URLs are unverified leads.")
@@ -308,9 +355,15 @@ def show_trace(trace, label):
             if selected is not None:
                 lead = leads[selected]
                 show_reasons(lead)
-                show_assessment(trace["assessment"].get(lead["facility_id"]))
+                show_facility_audit(lead, trace, assumptions)
                 if lead.get("citation"):
                     citation(lead["citation"])
+                assessment = trace["assessment"].get(lead["facility_id"])
+                if assessment and assessment["source_text"]:
+                    with st.expander("Original field context for this lead", type="compact"):
+                        st.caption("This field may include references to other facilities. "
+                                   "The current Gold row preserves the identity flag but no matched facility ID.")
+                        st.text(assessment["source_text"])
         st.markdown("**5. Ranking calculations**")
         if trace["scoring"]:
             policy = trace["scoring"]
@@ -332,8 +385,12 @@ def show_trace(trace, label):
             st.write(f'{row["score"]:g} total · evidence {points["evidence"]:g} · '
                      f'proximity {points["proximity"]:g} · address consistency {points["address_consistency"]:g}')
             st.caption(geography_detail(row, assumptions))
-            show_assessment(trace["assessment"].get(row["facility_id"]))
+            show_facility_audit(row, trace, assumptions)
             citation(row["citation"])
+            if len(trace["ranking"]) > 1:
+                with st.expander("Sensitivity to the field weights"):
+                    st.caption("What if capability and procedure used their mean weight? This reorders eligible rows only.")
+                    st.table(equal_weight_sensitivity(trace["ranking"], trace["scoring"]))
         else:
             st.caption("The ranker returned no eligible candidates to score.")
         st.markdown("**6. Final decision**")
@@ -349,8 +406,9 @@ def run_search(query):
     with st.spinner("Checking the CareProof index. The warehouse may take a moment to start…"):
         lookup, lookup_seconds = addresses()
         rows, service_seconds = service_rows(query["service"])
-        result = search(query, lookup, rows)
-        result["decision_trace"] = build_trace(query, lookup, rows, result)
+        audit = {}
+        result = search(query, lookup, rows, audit=audit)
+        result["decision_trace"] = build_trace(query, lookup, rows, result, audit)
     return result, lookup_seconds + service_seconds
 
 

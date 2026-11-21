@@ -253,7 +253,8 @@ def test_ui_comparison_and_review_pagination(ui):
     selection = next(widget for widget in app.selectbox if widget.label == "Compare the top result with")
     selection.select_index(0).run()
     assert not app.exception
-    assert list(app.table[0].value["Component"])[-1] == "Total"
+    comparison = next(table.value for table in app.table if "Component" in table.value)
+    assert list(comparison["Component"])[-1] == "Total"
     assert any("No coordinate distance was computed" in item.value for item in app.caption)
     selection = next(widget for widget in app.selectbox if widget.label == "Compare the top result with")
     selection.select_index(1).run()
@@ -317,8 +318,9 @@ def test_jaipur_dialysis_trace_audits_scores_and_record_conflict(capture):
 
     rows = [row for row in capture if row["service_key"] == "dialysis"]
     query = {"service": "dialysis", "location": {"city": "Jaipur"}}
-    result = search(query, [], rows)
-    trace = build_trace(query, [], rows, result)
+    audit = {}
+    result = search(query, [], rows, audit=audit)
+    trace = build_trace(query, [], rows, result, audit)
     assert trace["scoring"]["evidence_points_by_source_field"] == EVIDENCE_POINTS
     liberty, scr = trace["ranking"]
     for item, field, score in ((liberty, "capability", 70), (scr, "procedure", 68)):
@@ -358,7 +360,7 @@ def test_ui_trace_on_unranked_paths(ui, service, city, message):
     assert not app.exception
     trace = next(item for item in app.expander if item.label == "How CareProof reached this result")
     assert any(item.value == f"Abstained · {message}" for item in trace.text)
-    assert sum(item.value.startswith("**") for item in trace.markdown) == 6
+    assert sum(item.value[:3] in {f"**{i}" for i in range(1, 7)} for item in trace.markdown) == 6
 
 
 def test_ui_trace_shows_policy_and_selected_conflict(ui):
@@ -374,3 +376,89 @@ def test_ui_trace_shows_policy_and_selected_conflict(ui):
     trace = next(item for item in app.expander if item.label == "How CareProof reached this result")
     assert any("Assessment reason · text_mentions_other_facility_or_branch" == item.value for item in trace.text)
     assert any("no explicit denial" in item.value for item in trace.caption)
+
+
+def test_decision_funnel_and_equal_weight_sensitivity(capture):
+    from app.decision_trace import build_trace, counterfactual, equal_weight_sensitivity, facility_checks
+
+    rows = [row for row in capture if row["service_key"] == "dialysis"]
+    query = {"service": "dialysis", "location": {"city": "Jaipur"}}
+    audit = {}
+    result = search(query, [], rows, audit=audit)
+    assert result == search(query, [], rows)
+    trace = build_trace(query, [], rows, result, audit)
+    funnel = trace["funnel"]
+    assert trace["geography"]["normalized"] == {
+        "mode": "city", "value": "jaipur", "state": "rajasthan", "district": ""}
+    assert funnel["service_rows"] == funnel["unique_service_facilities"] == 128
+    assert funnel["geographic_rows"] == funnel["geographic_facilities"] == funnel["assessed_facilities"] == 13
+    assert funnel["unmatched_address_facilities"] + funnel["geographic_facilities"] == 128
+    assert sum(funnel["identity"].values()) == sum(funnel["offering"].values()) == 13
+    assert trace["decision"]["ranked"] + trace["decision"]["review"] == 13
+    sensitivity = equal_weight_sensitivity(trace["ranking"], trace["scoring"])
+    assert [(row["facility"], row["equal_weight_points"]) for row in sensitivity] == [
+        ("SCR Hospital", 69), ("Liberty Hospital", 69)]
+    assert [row["score"] for row in trace["ranking"]] == [70, 68]
+    lead = next(row for row in trace["evidence"]["review_leads"] if row["name"] == "CKS Hospital")
+    assessment = trace["assessment"][lead["facility_id"]]
+    checks = dict(facility_checks(lead, assessment))
+    assert checks["Offering cue"] == checks["No other-facility reference flagged"] == "FAIL"
+    assert checks["No explicit denial"] == "PASS"
+    assert checks["Geographic quality"] == "PASS" and checks["Eligible for ranking"] == "FAIL"
+    assert "RS Hospital" in assessment["source_text"]
+    notes = " ".join(counterfactual(lead, trace["geography"]["assumptions"]))
+    assert "other facilities" in notes and "every eligibility check" in notes and "validated" in notes
+    assert dict(facility_checks(lead, None))["Offering cue"] == "NOT EVALUATED"
+
+
+def test_funnel_excludes_unusable_coordinates_without_inventing_distance(capture):
+    import careproof.recommend as engine
+
+    rows = [row.copy() for row in capture if row["service_key"] == "dialysis"]
+    row = next(row for row in rows if row["name"] == "Liberty Hospital")
+    origin = {"latitude": row["candidate_latitude"], "longitude": row["candidate_longitude"]}
+    row.update(geo_status="missing_coordinates", candidate_latitude=None, candidate_longitude=None)
+    query = {"service": "dialysis", "location": origin, "radius_km": 10}
+    audit = {}
+    result = engine.recommend(query, [row], audit=audit)
+    assert result["reason"] == "no_reliable_match"
+    assert audit["unique_service_facilities"] == 1 and audit["geographic_facilities"] == 0
+    assert audit["assessed_facilities"] == 0
+    assert result["excluded_location_counts"] == {"coordinate_quality_requires_review": 1}
+    assert result["recommendations"] == result["verification_required"] == []
+    address = search({"service": "dialysis", "location": {"city": "Jaipur"}}, [], [row])
+    assert address["recommendations"][0]["distance_km"] is None
+    assert address["recommendations"][0]["score_components"]["proximity"] == 0
+
+
+def test_funnel_duplicate_rows_and_unscreened_abstention(capture):
+    rows = [row for row in capture if row["service_key"] == "dialysis"]
+    first = next(row for row in rows if row["name"] == "Liberty Hospital")
+    audit = {}
+    result = search({"service": "dialysis", "location": {"city": "Jaipur"}}, [],
+                    [*rows, first.copy()], audit=audit)
+    assert audit["service_rows"] == 129 and audit["duplicate_rows"] == 1
+    assert audit["unique_service_facilities"] == 128 and audit["geographic_rows"] == 13
+    assert len(result["recommendations"]) == 2
+    audit = {}
+    lookup = [{key: row[key] for key in ("city_clean", "state_clean", "district_clean",
+                                        "pin_clean", "pin_status")} for row in capture]
+    result = search({"service": "dialysis", "location": {"city": "Hyderabad"}}, lookup, rows, audit=audit)
+    assert result["reason"] == "ambiguous_place"
+    assert audit["parsed_location"]["value"] == "hyderabad"
+    assert "service_rows" not in audit and "screenings" not in audit
+
+
+def test_funnel_counts_screened_facilities_even_on_abstention(capture):
+    from app.decision_trace import build_trace, equal_weight_sensitivity
+
+    rows = [row for row in capture if row["service_key"] == "cardiac_surgery"]
+    query = {"service": "cardiac_surgery", "location": {"city": "Jaipur"}}
+    audit = {}
+    result = search(query, [], rows, audit=audit)
+    trace = build_trace(query, [], rows, result, audit)
+    assert trace["decision"]["reason"] == "no_reliable_match"
+    assert trace["funnel"]["service_rows"] == 56
+    assert trace["funnel"]["assessed_facilities"] == trace["decision"]["review"] == 6
+    assert trace["funnel"]["offering"] == {"FAIL": 6}
+    assert equal_weight_sensitivity(trace["ranking"], trace["scoring"]) == []
