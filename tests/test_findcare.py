@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 
@@ -422,3 +423,71 @@ def test_structured_location_pickers(rt):
     p = location_from_point(25.61, 85.14, rt.district_lookup)
     assert p.ok and p.district == "Patna" and "pinned point" in p.label
     assert not location_from_point(40.0, 85.0, rt.district_lookup).ok  # outside India
+
+
+# ---------------------------------------------------------------- agent (scripted LLM, no network)
+class ScriptedLLM:
+    def __init__(self, replies):
+        self.replies, self.seen = list(replies), []
+
+    def chat(self, messages, tools=None, **kw):
+        self.seen.append(messages[-1])
+        r = self.replies.pop(0)
+        return r(messages) if callable(r) else r
+
+
+def _call(name, **args):
+    return {"content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}]}
+
+
+def test_agent_grounded_answer(rt):
+    from findcare.agent import run_agent
+
+    def answer(messages):
+        out = json.loads(messages[-1]["content"])
+        top = out["recommendations"][0]
+        return {"content": f"Go to {top['name']} ({top['distance_km']} km). {top['quote_field']}: \"{top['key_quote']}\". "
+                           "Please phone the facility to confirm before travelling."}
+
+    llm = ScriptedLLM([_call("search_facilities", service="dialysis", location="Jaipur"), answer])
+    res = run_agent(rt, [{"role": "user", "content": "kidney failure patient near Jaipur"}], llm=llm)
+    assert res.grounding["ok"] and not res.used_fallback
+    assert "Jaipur Kidney Care Hospital" in res.answer and res.steps[0]["tool"] == "search_facilities"
+
+
+def test_agent_catches_fabrication_and_falls_back(rt):
+    from findcare.agent import run_agent
+
+    fake = {"content": "Go to Imaginary Super Speciality Hospital, 2 km away: \"we perform dialysis every day of the week\"."}
+    llm = ScriptedLLM([_call("search_facilities", service="dialysis", location="Jaipur"), fake, fake])
+    res = run_agent(rt, [{"role": "user", "content": "dialysis near Jaipur"}], llm=llm)
+    assert res.used_fallback and "Jaipur Kidney Care Hospital" in res.answer
+    assert "SYSTEM CHECK" in llm.seen[-1]["content"]  # the model was asked to fix it once
+
+
+def test_agent_reports_ambiguous_place(rt):
+    from findcare.agent import Tools
+
+    out = Tools(rt).search_facilities("dialysis", "Aurangabad")
+    assert out["status"] == "ambiguous_location" and len(out["options"]) >= 2
+
+
+def test_grounding_check_flags_unknown_facility_and_quote(rt):
+    from findcare.agent import Tools, check_grounding
+    from findcare.text import norm
+
+    outs = [Tools(rt).search_facilities("dialysis", "Jaipur")]
+    names = set(rt.facilities["name"].map(norm))
+    bad = check_grounding('Try Patna Mother Care: "Caesarean section on demand all night".', outs, names)
+    assert not bad["ok"] and len(bad["issues"]) >= 2
+    good = check_grounding('Jaipur Kidney Care Hospital: "Performs hemodialysis".', outs, names)
+    assert good["ok"]
+
+
+def test_grounding_check_flags_overclaimed_certainty(rt):
+    from findcare.agent import Tools, check_grounding
+    from findcare.text import norm
+
+    outs = [Tools(rt).search_facilities("dialysis", "Jaipur")]
+    g = check_grounding("Jaipur Kidney Care Hospital is the best option. We are 65% sure about it.", outs, set(rt.facilities["name"].map(norm)))
+    assert not g["ok"] and "overclaims" in g["issues"][0]

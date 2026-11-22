@@ -75,6 +75,99 @@ st.title("🏥 Find the right care")
 st.markdown("Tell us what the patient needs and where they are. We'll suggest facilities **and show exactly why** — "
             "including how sure we are. *Always phone the facility before travelling.*")
 
+top_mode = st.segmented_control("Mode", ["🔎 Search", "💬 Ask the assistant"], default="🔎 Search",
+                                label_visibility="collapsed", key="top_mode")
+
+
+@st.cache_resource
+def _tracing():
+    from findcare.agent import setup_tracing
+
+    return setup_tracing()
+
+
+def _tool_summary(step: dict) -> str:
+    out, a = step["output"], step["args"]
+    args = ", ".join(f"{k}={v!r}" for k, v in a.items())
+    head = f"🔧 **{step['tool']}**({args}) → `{out.get('status', '')}`"
+    if out.get("recommendations") is not None:
+        names = [f"{r['rank']}. {r['name']} ({r['distance_km']} km, {r['evidence_level']})" for r in out["recommendations"][:5]]
+        head += "  \n" + ("; ".join(names) if names else "no recommendation")
+        if out.get("held_for_review"):
+            head += f"  \nHeld for review: {', '.join(h['name'] for h in out['held_for_review'][:4])}"
+    elif out.get("options"):
+        head += f"  \nOptions: {', '.join(out['options'][:6])}"
+    return head
+
+
+def _render_meta(meta: dict):
+    g = meta.get("grounding") or {}
+    if meta.get("error"):
+        st.caption(f":red[{meta['error']}]")
+        return
+    if meta.get("fallback"):
+        st.caption(":orange[⚠ The model's answer failed the grounding check, so this is the checked summary of the tool results instead.]")
+    elif g.get("ok"):
+        st.caption(f":green[✔ Verified against tool results] – {g.get('facilities_checked', 0)} facilities and "
+                   f"{g.get('quotes_checked', 0)} quotes checked · {meta.get('seconds', 0)} s")
+    with st.expander(f"How the assistant decided ({len([s for s in meta['steps'] if s['type'] == 'tool'])} tool calls)"):
+        for stp in meta["steps"]:
+            if stp["type"] == "tool":
+                st.markdown(_tool_summary(stp))
+                with st.popover("Raw tool output"):
+                    st.json(stp["output"], expanded=False)
+            else:
+                gg = stp["grounding"]
+                st.markdown(("✅ Grounding check passed" if gg["ok"] else "❌ Grounding check failed: " + "; ".join(gg["issues"])))
+        if meta.get("trace_id"):
+            st.caption(f"MLflow trace: `{meta['trace_id']}` (experiment `findcare-agent`)")
+
+
+if top_mode == "💬 Ask the assistant":
+    from findcare.agent import run_agent
+
+    st.caption("Describe the patient's need in your own words. The assistant uses the **same checked data, safety checks and "
+               "ranking** as Search, can only state facts returned by those tools, and every answer is verified against the "
+               "tool results before you see it.")
+    _tracing()
+    chat = st.session_state.setdefault("chat", [])
+    if not chat:
+        st.markdown("**Try:**")
+        ex = ["My patient's kidneys have failed. She lives near Gaya in Bihar and can't travel far.",
+              "Pregnant woman in obstructed labour, we are at PIN 226001 – who can do an emergency C-section?",
+              "Newborn born at 30 weeks, struggling to breathe, we are in Darbhanga.",
+              "Road accident on the highway near Agra – where is the nearest trauma care?"]
+        cols = st.columns(2)
+        for i, e in enumerate(ex):
+            if cols[i % 2].button(e, key=f"ex{i}", width="stretch"):
+                st.session_state["pending_prompt"] = e
+                st.rerun()
+    for m in chat:
+        with st.chat_message(m["role"]):
+            st.markdown(m["content"])
+            if m.get("meta"):
+                _render_meta(m["meta"])
+    prompt = st.chat_input("Describe what the patient needs and where they are…") or st.session_state.pop("pending_prompt", None)
+    if prompt:
+        chat.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        with st.chat_message("assistant"):
+            with st.spinner("Checking facilities, evidence and safety checks…"):
+                try:
+                    r = run_agent(rt, [{"role": m["role"], "content": m["content"]} for m in chat], guarded=safety)
+                    meta = {"steps": r.steps, "grounding": r.grounding, "fallback": r.used_fallback,
+                            "trace_id": r.trace_id, "seconds": r.seconds}
+                    answer = r.answer
+                except Exception as e:  # model endpoint unavailable etc.
+                    answer, meta = "The assistant is unavailable right now – please use **Search** instead.", {"steps": [], "error": str(e)[:300]}
+        chat.append({"role": "assistant", "content": answer, "meta": meta})
+        st.rerun()
+    if chat and st.button("Start a new conversation"):
+        st.session_state["chat"] = []
+        st.rerun()
+    st.stop()
+
 labels = [s.label for s in SERVICES]
 service_label = st.selectbox("**1. What care does the patient need?**", labels, index=0)
 
