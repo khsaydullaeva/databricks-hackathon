@@ -8,6 +8,15 @@ You give it a **service** (dialysis, emergency C-section, NICU, cardiac surgery,
 
 The full scoring rules are in **[docs/METHODOLOGY.md](docs/METHODOLOGY.md)**.
 
+## Combined solution (branch `combined`)
+
+This branch merges two team solutions:
+
+- **Find the Right Care** (`app/`, `notebooks/`): PIN, district and coordinate search with data cleaning; 20 services; NFHS-5 district context; fact-checking against each hospital's own website; calibrated evidence levels.
+- **CareProof** (`careproof/`, by our teammate): a staged SQL pipeline with quality gates, attribution guards, analyst review holds, abstention, a decision funnel and sensitivity analysis.
+
+The app in `app/` uses CareProof's best ideas directly: safety mode with abstention, the attribution guard, analyst holds, the decision funnel and the equal-weight check. See [docs/METHODOLOGY.md §2d](docs/METHODOLOGY.md).
+
 ## Who it's for
 
 | User | Workflow |
@@ -65,7 +74,7 @@ scripts/verify_websites.py  crawl official hospital websites -> web_site_status 
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -r app/requirements.txt pytest
-.venv/bin/python -m pytest -q tests                      # 27 tests, synthetic data
+.venv/bin/python -m pytest -q tests                      # 32 tests, synthetic data
 .venv/bin/python scripts/build_local.py --synthetic      # or --facilities/--pincodes/--nfhs  <csv|parquet>
 cd app && FINDCARE_LOCAL_DIR=../local_data ../.venv/bin/streamlit run app.py
 ```
@@ -79,7 +88,7 @@ cd app && FINDCARE_LOCAL_DIR=../local_data ../.venv/bin/streamlit run app.py
   - The Streamlit app was smoke-tested on the real gold tables. After the first load (about 1 s), each search takes about 0.1 s.
 - **Fact-checked against hospitals' own websites:** we crawled 7,651 official domains. Own sites confirmed 20,164 claims. Using the record alone, claims rated Strong were confirmed 65% of the time, Moderate 47%, Limited 36% and Indirect 17%. Those are lower bounds, and they show the evidence levels carry real signal.
 - **Review queue:** 1,469 facilities are marked *needs review* (contradictions or possible merged sites) and 3,229 sit in `gold_review_queue` for later labelling.
-- **Tests:** 27 unit and integration tests pass. They include regression tests for every real-data quirk listed below.
+- **Tests:** 32 unit and integration tests pass for `app/` (CareProof's own suite: 156 pass; 36 need private report files that aren't in the repo). They include regression tests for every real-data quirk listed below.
 - **Not yet run:** the notebooks inside Databricks itself, and the deployed app. The notebook code calls the same tested functions, but it hasn't executed on serverless compute yet.
 - **Not yet measured:** precision. Spot-checks of random "Strong" and "Moderate" matches looked correct, but use notebook 05 to label a sample properly.
 

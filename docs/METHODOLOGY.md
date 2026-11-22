@@ -105,6 +105,24 @@ These rates are lower bounds on precision, because a site that doesn't mention a
 
 Records with priority ≥ 2 are marked `needs_review`. The app still shows them, because in rural areas they may be the only option, but it marks them "⚑ Record needs review" and offers a "Hide records that need review" switch.
 
+## 2d. Safety checks and abstention (combined from CareProof)
+
+These ideas come from our teammate's CareProof solution, which is in the `careproof/` folder with its own SQL pipeline, app and audit.
+
+- **Attribution guard.** A quote can describe a *different* facility ("Katyani Hospital is a General Surgery Clinic in Zirakpur" inside the record for *Kalyani* Hospital) or a different branch city ("Provides dialysis at Namakkal"). We detect both:
+  - A record whose text declares another facility is flagged as possibly mixed. That's 651 facilities, mostly near-identical names the upstream data merged.
+  - A claim whose naming quotes all describe someone else doesn't count as evidence.
+- **Analyst review holds.** CareProof's hand-reviewed facility × service holds and coordinate holds (`app/findcare/data/*.json`) withhold those pairs, and the app shows the analyst's reason and quotes.
+- **Safety mode, on by default.** A facility is ranked only if all four checks pass:
+  - evidence is at least Moderate;
+  - the quote describes this facility;
+  - the record is consistent with itself;
+  - there's no analyst hold.
+
+  Facilities that fail are listed under *Held for review* with the reason. If none pass, the app **abstains** and says why, rather than guessing.
+- **Decision funnel.** Every search reports how many facilities survived each step, and why the others dropped out.
+- **Equal-weight sensitivity.** Every search reports whether the #1 answer would change if all four factors counted equally.
+
 ## 3. Trust: is the record internally consistent?
 
 `trust = clamp(1 − Σ penalties, 0.1, 1) × (0.85 + 0.15 × completeness)`

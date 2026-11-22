@@ -123,8 +123,12 @@ def test_recommend_dialysis_jaipur(rt):
     names = [r["name"] for r in res.recommendations]
     assert names.count("Jaipur Kidney Care Hospital") == 1  # duplicate collapsed
     assert "Pink City Hospital" not in names  # negated mention
-    sawai = [r for r in res.recommendations if r["name"] == "Sawai Multispeciality"]
+    # F4's coordinates contradict its postcode -> safety mode holds it back (with reasons) instead of ranking it
+    assert "Sawai Multispeciality" not in names
+    sawai = [r for r in res.held if r["name"] == "Sawai Multispeciality"]
     assert sawai, "postcode+city outvote wrong coordinates, so F4 should be found near Jaipur"
+    assert "record_contradictions" in sawai[0]["guard_issues"]
+    assert any(r["name"] == "Sawai Multispeciality" for r in recommend(rt, SERVICES_BY_ID["dialysis"], loc, guarded=False).recommendations)
     assert sawai[0]["location_basis"].startswith("postcode centre (coordinates contradicted")
     assert any("km from the centre of its postcode" in c for c in sawai[0]["cautions"])
     assert any(l["name"] == "City Nephro Clinic" for l in res.leads)  # indirect only
@@ -142,7 +146,7 @@ def test_recommend_widens_radius(rt):
 def test_plausibility_penalty(rt):
     loc = resolve_location("Patna", rt.pin_lookup, rt.district_lookup, rt.place_index)
     res = recommend(rt, SERVICES_BY_ID["nicu"], loc, radius_km=50)
-    every = res.recommendations + res.leads
+    every = res.recommendations + res.held + res.leads
     tiny = [r for r in every if r["name"] == "Tiny Child Clinic"][0]
     assert tiny["plausibility_factor"] < 1 and any("beds" in c for c in tiny["cautions"])
 
@@ -323,7 +327,7 @@ def test_web_confirmation_raises_evidence_and_is_cited():
     top = res.recommendations[0]
     assert top["web_status"] == "confirmed_own_site" and top["web_url"] == "https://jkc.example/services"
     assert any(c.get("url") == "https://jkc.example/services" for c in top["citations"])
-    sawai = [r for r in res.recommendations if r["name"] == "Sawai Multispeciality"][0]
+    sawai = [r for r in res.recommendations + res.held if r["name"] == "Sawai Multispeciality"][0]
     assert any("does not mention this service" in c for c in sawai["cautions"])
     only = recommend(rt_, SERVICES_BY_ID["dialysis"], loc, only_confirmed=True)
     assert {r["web_status"] for r in only.recommendations} == {"confirmed_own_site"}
@@ -350,3 +354,57 @@ def test_patient_education_text_is_not_a_confirmation():
     assert not any(h["service_id"] == "transplant" for h in find_services(edu))
     offer = [{"url": "u", "text": "Our hospital provides kidney transplant surgery with a dedicated transplant team and modern ICU support for recovery."}]
     assert any(h["service_id"] == "transplant" for h in find_services(offer))
+
+
+# ---------------------------------------------------------------- CareProof guards (safety mode)
+def test_attribution_guard_detects_other_facility_and_city():
+    from findcare.attribution import other_facility, other_site
+
+    assert other_facility("Janakpuri Super Speciality Hospital is a government hospital in Delhi", "Aravind Eye Hospital") == "Janakpuri Super Speciality Hospital"
+    assert other_facility("Aravind Eye Hospital is a private hospital", "Aravind Eye Hospital") is None  # itself
+    assert other_facility("Apollo Hospitals Jubilee Hills is a multispecialty hospital", "Apollo Hospitals Chennai") is None  # brand branch
+    assert other_facility("SGVP Clinic is a unit of SGVP Holistic Hospital", "SGVP Holistic Hospital") is None
+    assert other_site("Provides dialysis at Namakkal", "chennai", {"chennai", "namakkal"}) == "Namakkal"
+    assert other_site("Provides dialysis in partnership with X", "chennai", {"chennai"}) is None
+
+
+def test_safety_mode_holds_conflicted_claims_and_abstains():
+    raw = synthetic.facilities()
+    # the only Ajmer facility's dialysis claim describes another hospital
+    raw.loc[raw["pk_unique_id"] == "F7", "name"] = "Ajmer Care Clinic"
+    raw.loc[raw["pk_unique_id"] == "F7", "procedure"] = '["Shanti Dialysis Hospital is a dialysis hospital in Jaipur"]'
+    fac, _ = pipeline.clean_facilities(raw)
+    g = pipeline.build_gold(fac, pipeline.clean_pincodes(synthetic.pincodes()), None, log=lambda *_: None)
+    rt_ = pipeline.Runtime.from_tables({k: pipeline.to_storable(v) for k, v in g.items()})
+    f = g["gold_facilities"].set_index("facility_id")
+    assert "other_facility_text" in {x["code"] for x in f.loc["F7", "trust_flags"]}
+    ev = g["gold_facility_service_evidence"].set_index(["facility_id", "service_id"])
+    assert bool(ev.loc[("F7", "dialysis"), "attribution_conflict"])
+    loc = resolve_location("Ajmer", rt_.pin_lookup, rt_.district_lookup, rt_.place_index)
+    res = recommend(rt_, SERVICES_BY_ID["dialysis"], loc, radius_km=10)
+    assert all(r["name"] != "Ajmer Care Clinic" for r in res.recommendations)
+    held = [r for r in res.held if r["name"] == "Ajmer Care Clinic"]
+    assert held and "claim_describes_other_facility" in held[0]["guard_issues"]
+
+
+def test_funnel_and_sensitivity(rt):
+    loc = resolve_location("Jaipur", rt.pin_lookup, rt.district_lookup, rt.place_index)
+    res = recommend(rt, SERVICES_BY_ID["dialysis"], loc)
+    counts = [c for _, c, _ in res.funnel]
+    assert counts[1:-1] == sorted(counts[1:-1], reverse=True)  # each step can only remove facilities
+    assert counts[-1] == len(res.recommendations)
+    assert res.sensitivity and "top1_same" in res.sensitivity
+
+
+def test_abstains_when_nothing_passes(rt):
+    loc = resolve_location("Patna", rt.pin_lookup, rt.district_lookup, rt.place_index)
+    res = recommend(rt, SERVICES_BY_ID["burn_care"], loc)
+    assert res.abstained and not res.recommendations and res.abstain_reason
+
+
+def test_analyst_holds_load_and_map_services():
+    from findcare.attribution import review_holds
+
+    h = review_holds()
+    assert h and all(sid in {"dialysis", "mri", "nicu", "emergency_csection", "cardiac_surgery", "trauma", "emergency"} for _, sid in h)
+    assert all(v["reason"] for v in h.values())

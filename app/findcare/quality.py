@@ -27,6 +27,8 @@ PENALTY = {
     "multi_site_text": 0.15,
     "no_sources": 0.10,
     "breadth_outlier": 0.10,
+    "other_facility_text": 0.15,
+    "coordinate_hold": 0.20,
     "duplicate_record": 0.0,  # informational; handled by de-duplication in ranking
 }
 COORD_PIN_MAX_KM = 40.0

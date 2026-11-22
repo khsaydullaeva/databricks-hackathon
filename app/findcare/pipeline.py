@@ -257,8 +257,14 @@ def build_gold(silver_fac: pd.DataFrame, silver_pins: pd.DataFrame, nfhs_wide: p
     evidence = pd.concat(ev_parts, ignore_index=True)
     strong_counts = evidence[evidence["has_strong"]].groupby("facility_id").size()
     fac = apply_breadth_flag(fac, strong_counts, len(SERVICES))  # record-only claims, before web merge
+    log("checking attribution (does the text describe THIS facility?)…")
+    known_places = set(district_lookup["district_norm"]) | set(fac.loc[fac["city_norm"].map(fac["city_norm"].value_counts()) >= 2, "city_norm"])
+    known_places.discard("")
+    fac = flag_other_facility_text(fac)
+    evidence = apply_attribution(evidence, fac, known_places)
     log("merging website fact-checks…")
     evidence, fac = merge_web_evidence(evidence, fac, web_status, web_hits)
+    evidence = finalize_attribution(evidence)
     fac, queue = review_queue(fac, evidence)
     calibration = evidence_calibration(evidence)
     log(f"  {int(fac['needs_review'].sum())} facilities need review; {int((evidence['web_status'] == 'confirmed_own_site').sum())} claims confirmed on own website")
@@ -368,7 +374,67 @@ def evidence_calibration(evidence: pd.DataFrame) -> pd.DataFrame:
     return t.sort_values("level", key=lambda x: x.map(order)).reset_index(drop=True)
 
 
-MAJOR_FLAGS = {"coords_vs_pin", "state_mismatch", "multi_site_text", "no_location", "breadth_outlier"}
+def flag_other_facility_text(fac: pd.DataFrame) -> pd.DataFrame:
+    """Trust flags from CareProof's guards: text that declares another facility (mixed/merged
+    record), and analyst coordinate holds."""
+    from .attribution import coordinate_holds, other_facility
+    from .quality import _flag
+
+    fac = fac.copy()
+    ch = coordinate_holds()
+    flags_out, trust_out = [], []
+    for r in fac.itertuples(index=False):
+        flags = list(r.trust_flags)
+        texts = (list(r.capability_list) + list(r.procedure_list) + list(r.equipment_list)
+                 + [x for x in re.split(r"(?<=[.!?])\s+", r.description or "") if x])
+        others = [(t, n) for t in texts if (n := other_facility(t, r.name))]
+        if others:
+            t, n = others[0]
+            flags.append(_flag("other_facility_text", f"Record text describes another facility ({n}): “{t[:140]}” – it may mix several sites."))
+        if r.facility_id in ch:
+            flags.append(_flag("coordinate_hold", "Analyst review: its coordinates disagree with its site (coordinate hold from the CareProof audit)."))
+        added = sum(f["penalty"] for f in flags[len(r.trust_flags):])
+        flags_out.append(flags)
+        trust_out.append(round(max(0.1, r.trust_score - added), 4))
+    fac["trust_flags"], fac["trust_score"] = flags_out, trust_out
+    return fac
+
+
+def apply_attribution(evidence: pd.DataFrame, fac: pd.DataFrame, known_places: set[str]) -> pd.DataFrame:
+    """Mark record quotes that describe another facility or another city (CareProof attribution guard)."""
+    from .attribution import other_facility, other_site
+
+    info = fac.set_index("facility_id")[["name", "city_norm"]].to_dict("index")
+    recs = evidence.to_dict("records")
+    for r in recs:
+        f = info.get(r["facility_id"], {})
+        for it in r["items"]:
+            n = other_facility(it["text"], f.get("name", ""))
+            c = None if n else other_site(it["text"], f.get("city_norm", ""), known_places)
+            if n or c:
+                it["attribution_issue"] = f"describes another facility ({n})" if n else f"places the service in another city ({c})"
+    return pd.DataFrame(recs)
+
+
+def finalize_attribution(evidence: pd.DataFrame) -> pd.DataFrame:
+    """Row-level guard result + CareProof analyst holds."""
+    from .attribution import review_holds
+
+    holds = review_holds()
+    conflict, note, hold = [], [], []
+    for r in evidence.itertuples(index=False):
+        strong_rec = [i for i in r.items if i["kind"] == "strong" and not i["field"].startswith("website")]
+        bad = [i for i in strong_rec if i.get("attribution_issue")]
+        is_conf = bool(strong_rec) and len(bad) == len(strong_rec) and r.web_status != "confirmed_own_site"
+        conflict.append(is_conf)
+        note.append(f"The quote that names the service {bad[0]['attribution_issue']}: “{bad[0]['text'][:140]}”" if is_conf else None)
+        hold.append(holds.get((r.facility_id, r.service_id)))
+    ev = evidence.copy()
+    ev["attribution_conflict"], ev["attribution_note"], ev["analyst_hold"] = conflict, note, hold
+    return ev
+
+
+MAJOR_FLAGS = {"coords_vs_pin", "state_mismatch", "multi_site_text", "no_location", "breadth_outlier", "other_facility_text", "coordinate_hold"}
 
 
 def review_queue(fac: pd.DataFrame, evidence: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -520,6 +586,10 @@ class Runtime:
             ev["has_strong"] = ev["has_strong"].map(lambda v: v if isinstance(v, (bool, np.bool_)) else str(v).lower() in {"true", "1"})
             for c in ("strong_fields", "fields", "items", "negated"):
                 ev[c] = ev[c].map(_json_obj)
+            if "attribution_conflict" in ev:
+                ev["attribution_conflict"] = ev["attribution_conflict"].map(lambda v: v if isinstance(v, (bool, np.bool_)) else str(v).lower() == "true")
+            if "analyst_hold" in ev:
+                ev["analyst_hold"] = ev["analyst_hold"].map(lambda v: v if isinstance(v, dict) else (json.loads(v) if isinstance(v, str) and v.startswith("{") else None))
             evidence = {sid: g.drop(columns=["service_id"]).set_index("facility_id") for sid, g in ev.groupby("service_id")}
         rt = cls(fac, pin, dl, pi, nl, t.get("gold_district_nfhs_map"), evidence)
         cal = t.get("gold_evidence_calibration")

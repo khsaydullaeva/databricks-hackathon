@@ -62,6 +62,7 @@ def card(r: dict) -> str:
   <details style="margin-top:6px"><summary>How this score was computed</summary>
     <div style="font-size:13px">{breakdown}<br>{raw}</div></details>
   {('<div style="font-size:13px;color:#555;margin-top:6px"><i>' + escape(r['vs_next']) + '</i></div>') if r.get('vs_next') else ''}
+  <div style="font-size:11px;color:#888;margin-top:4px">Record ID: {escape(str(r['facility_id']))}</div>
   {('<div style="font-size:12px;margin-top:6px">Sources: ' + sources + '</div>') if sources else '<div style="font-size:12px;margin-top:6px;color:#a40e26">No source URL recorded.</div>'}
 </div>"""
 
@@ -76,7 +77,15 @@ def result_html(res, ctx: dict | None = None) -> str:
                  f"{c['n_limited']} limited, {c['n_indirect']} indirect-only mentions (of {c['n_facilities_in_radius']} facilities in range).</p>")
     if res.service.advice:
         parts.append(f"<p>💡 {escape(res.service.advice)} <b>Always call ahead before travelling.</b></p>")
+    if getattr(res, "abstained", False):
+        parts.append(f"<div style='background:#ffebe9;border-radius:8px;padding:8px 12px;margin:8px 0'><b>No recommendation.</b> {escape(res.abstain_reason or '')}</div>")
     parts += [card(r) for r in res.recommendations]
+    if getattr(res, "held", None):
+        parts.append("<h3>Held for review (failed a safety check – not recommended)</h3>")
+        parts += [card(r) for r in res.held]
+    if getattr(res, "funnel", None):
+        rows = "".join(f"<tr><td>{escape(a)}</td><td style='text-align:right'>{b}</td><td style='color:#666'>{escape(c)}</td></tr>" for a, b, c in res.funnel)
+        parts.append(f"<details><summary><b>Decision funnel</b></summary><table style='font-size:13px'>{rows}</table></details>")
     if res.leads:
         parts.append("<h3>Unverified leads (indirect or weak evidence – call to confirm)</h3>")
         parts += [card(r) for r in res.leads]
