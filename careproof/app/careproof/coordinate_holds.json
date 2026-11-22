@@ -1,0 +1,12 @@
+{
+  "d460ac8e-ced1-4faf-aeb8-8d22aa7aed93": {
+    "related_facility_id": "a8f21439-6a36-4a87-b67f-71ed343e05f3",
+    "reason": "coordinate_site_disagreement",
+    "provenance": "Authenticated Bronze export and operator address comparison; see sprint1/coordinate_integrity_review.md"
+  },
+  "a8f21439-6a36-4a87-b67f-71ed343e05f3": {
+    "related_facility_id": "d460ac8e-ced1-4faf-aeb8-8d22aa7aed93",
+    "reason": "coordinate_site_disagreement",
+    "provenance": "Authenticated Bronze export and operator address comparison; see sprint1/coordinate_integrity_review.md"
+  }
+}

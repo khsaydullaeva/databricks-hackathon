@@ -1,0 +1,156 @@
+{
+  "stage": "13",
+  "status": "prepared_pending_live_review_and_signoff",
+  "checked_at_utc": "2026-11-21T21:33:02.929511+00:00",
+  "app_url": "https://careproof-demo-7474660866777518.aws.databricksapps.com",
+  "app_url_basis": "Archived Stage 12 machine gate, existing deployment",
+  "prior_stage12_gate": {
+    "passed": true,
+    "checked_at_utc": "2026-11-21T21:26:39.201345+00:00"
+  },
+  "demo_queries": [
+    {
+      "case": "strong",
+      "query": {
+        "service": "dialysis",
+        "location": {
+          "city": "Jaipur"
+        }
+      },
+      "observed_mode": "local_replay_of_recorded_databricks_export",
+      "status": "ranked",
+      "reason": null,
+      "ranked_count": 2,
+      "review_count": 11,
+      "ranked_citations": [
+        {
+          "citation": {
+            "record_id": "5aaac470-a3fc-48e1-b01e-2bd42ff32a44",
+            "source_field": "capability",
+            "claim_text": "Provides dialysis services",
+            "source_content_id": "9b0d282e-54be-4b79-99b7-877c7e61019e",
+            "matched_aliases": [
+              "dialysis"
+            ],
+            "source_attribution_status": "unverified_row_leads"
+          },
+          "captured_original_record_match": true
+        },
+        {
+          "citation": {
+            "record_id": "4105a305-4d33-49e1-ad26-d0c3d91bc076",
+            "source_field": "procedure",
+            "claim_text": "Provides dialysis services",
+            "source_content_id": "71e7e92d-a634-4362-82b4-ba43572d6162",
+            "matched_aliases": [
+              "dialysis"
+            ],
+            "source_attribution_status": "unverified_row_leads"
+          },
+          "captured_original_record_match": true
+        }
+      ],
+      "example_conflict": {
+        "facility_id": "3973f354-7588-4375-a5c1-f85957185077",
+        "reasons": [
+          "evidence_conflicting",
+          "offering_not_supported",
+          "facility_attribution_uncertain",
+          "verification_reason_not_supportive"
+        ],
+        "claim": "CKS Hospital offers Nephrology & Dialysis",
+        "field": "capability"
+      },
+      "revised_app_browser_review": "pending",
+      "existing_app_observation": {
+        "reported_by": "user",
+        "ranked_count": 2,
+        "review_count": 11,
+        "warehouse_seconds": 7.5
+      }
+    },
+    {
+      "case": "conflict",
+      "query": {
+        "service": "dialysis",
+        "location": {
+          "city": "Nagercoil"
+        }
+      },
+      "observed_mode": "local_replay_of_recorded_databricks_export",
+      "status": "abstain",
+      "reason": "no_reliable_match",
+      "ranked_count": 0,
+      "review_count": 1,
+      "ranked_citations": [],
+      "example_conflict": {
+        "facility_id": "0007a104-2bd7-412d-8ffd-7161e703dbc2",
+        "reasons": [
+          "evidence_conflicting",
+          "offering_not_supported",
+          "facility_attribution_uncertain",
+          "verification_reason_not_supportive"
+        ],
+        "claim": "Dialysis unit",
+        "field": "equipment"
+      },
+      "revised_app_browser_review": "pending"
+    },
+    {
+      "case": "insufficient",
+      "query": {
+        "service": "cardiac_surgery",
+        "location": {
+          "city": "Jaipur"
+        }
+      },
+      "observed_mode": "local_replay_of_recorded_databricks_export",
+      "status": "abstain",
+      "reason": "no_reliable_match",
+      "ranked_count": 0,
+      "review_count": 6,
+      "ranked_citations": [],
+      "example_conflict": {
+        "facility_id": "3973f354-7588-4375-a5c1-f85957185077",
+        "reasons": [
+          "evidence_conflicting",
+          "offering_not_supported",
+          "facility_attribution_uncertain",
+          "verification_reason_not_supportive"
+        ],
+        "claim": "CKS Hospital offers Cardiology & Cardiac Surgery",
+        "field": "capability"
+      },
+      "revised_app_browser_review": "pending"
+    }
+  ],
+  "risk_notes": [
+    "Dataset attribution cannot establish current service availability or clinical quality.",
+    "Coordinate bounding does not prove branch location. No postal directory is loaded.",
+    "No external source verification or independent clinic-level labels were collected."
+  ],
+  "passed_checks": [
+    "150 local regression tests",
+    "Stage 12 archived gate",
+    "No credential pattern matches"
+  ],
+  "failed_checks": [
+    "Live Gold/Bronze probe failed at OAuth",
+    "Fresh Stage 12 and Stage 13 attempts timed out during initialization"
+  ],
+  "pending_checks": [
+    "Revised snapshot deployment approval",
+    "Live browser trace and three demos",
+    "Fresh independent gates",
+    "Explicit human final approval"
+  ],
+  "evidence_paths": [
+    "reports/gate_12.json",
+    "reports/stage13_evaluation.md",
+    "reports/stage13_eda.md",
+    "reports/stage13_metrics.json",
+    "docs/submission_checklist.md"
+  ],
+  "blocker": "Sandbox lacks cached workspace OAuth credentials. The current trace revision is local and final signoff is pending.",
+  "next_action": "Review the revised app after authorized deployment, record the three live demos, and run the trusted Stage 13 gate with --approve-final only after human signoff."
+}
