@@ -1,4 +1,5 @@
-command: ["streamlit", "run", "app.py"]
+# HTML/3D front-end (FastAPI). The previous Streamlit UI is still in app.py: command ["streamlit", "run", "app.py"]
+command: ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
 env:
   # Add a SQL warehouse resource to the app with resource key "sql-warehouse"
   - name: DATABRICKS_WAREHOUSE_ID

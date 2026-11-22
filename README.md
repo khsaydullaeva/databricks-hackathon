@@ -17,6 +17,27 @@ This branch merges two team solutions:
 
 The app in `app/` uses CareProof's best ideas directly: safety mode with abstention, the attribution guard, analyst holds, the decision funnel and the equal-weight check. See [docs/METHODOLOGY.md §2d](docs/METHODOLOGY.md).
 
+## HTML / 3D interface (branch `html-ui`)
+
+The Databricks App now serves a custom web interface (`app/server.py` with FastAPI, plus `app/static/`) instead of Streamlit. It uses only open-source map tools:
+- **MapLibre GL JS:** a tilted 3D map, with terrain relief from AWS Terrain Tiles (open data).
+- **deck.gl:** facilities drawn as 3D columns (height = score, colour = evidence level), arcs from the patient to each option, and 3D hexagons showing reliable coverage nationwide.
+- **OpenFreeMap tiles,** recoloured into a dark theme in code.
+
+What's in it:
+- Search by city, district, PIN or a map pin, with "held for review" and "unverified lead" tabs.
+- A detail drawer for each facility (quotes, score bars, website and AI-reader checks, record ID).
+- District health context and a "how we decided" view (decision funnel, equal-weight check, calibration).
+- The streaming assistant with its live working log.
+
+**Shareable links**, handy for demos:
+- `/?service=nicu&pin=846004` opens straight into a search.
+- `&city=Jaipur, Rajasthan`, `&lat=..&lon=..` and `&state=bihar&district=gaya` choose the location.
+- `&open=1` opens the top result's details.
+- `&ask=<question>` asks the assistant.
+
+The previous Streamlit interface is still in `app/app.py`. To switch back, change the command in `app.yaml`.
+
 ## AI assistant (branch `agent`)
 
 - **💬 Ask the assistant:** describe the need in your own words. A Llama 3.3 70B agent on the Databricks Foundation Model API calls our audited tools (location, ranking with safety checks, evidence, district context, ranking explanation). Every answer is checked against the tool results before you see it, and each step is traced in MLflow.
@@ -41,8 +62,9 @@ The app in `app/` uses CareProof's best ideas directly: safety mode with abstent
 ## Repository layout
 
 ```
-app/                      Databricks App (Streamlit) + the shared logic package
-  app.py                  UI
+app/                      Databricks App + the shared logic package
+  server.py, static/      HTML/3D UI (FastAPI + MapLibre + deck.gl)
+  app.py                  previous Streamlit UI
   app.yaml, requirements.txt
   data.py                 loads gold tables from a SQL warehouse (or local parquet)
   findcare/               ALL logic: services taxonomy, evidence, trust, geo, NFHS, ranking

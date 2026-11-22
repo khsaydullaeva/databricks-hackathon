@@ -221,10 +221,12 @@ class Tools:
             "key_quote": (r["citations"][0]["text"] if r["citations"] else None),
             "quote_field": (r["citations"][0]["field"] if r["citations"] else None),
             "phone": r["phone"], "operator": r.get("operator_type"), "cautions": r["cautions"][:2], "score": r["score"],
-            "ai_reader_verdict": (r.get("ai_reader") or {}).get("verdict")}
+            "ai_reader_verdict": (r.get("ai_reader") or {}).get("verdict"),
+            "lat": None if r.get("lat") is None else round(float(r["lat"]), 5), "lon": None if r.get("lon") is None else round(float(r["lon"]), 5)}
         return {
             "status": "abstained" if res.abstained else "ok",
-            "service": svc.label, "location": loc.label, "district": loc.district, "state": loc.state,
+            "service": svc.label, "service_id": svc.id, "location": loc.label, "district": loc.district, "state": loc.state,
+            "location_lat": round(loc.lat, 5), "location_lon": round(loc.lon, 5),
             "searched_radius_km": res.searched_radius_km,
             "recommendations": [{"rank": r["rank"], **fmt(r)} for r in res.recommendations],
             "held_for_review": [{"name": r["name"], "facility_id": r["facility_id"], "distance_km": r["distance_km"],
