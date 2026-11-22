@@ -2,6 +2,7 @@
 import json
 import os
 import time
+from typing import Protocol
 from urllib.parse import urlsplit
 
 from databricks.sdk import WorkspaceClient
@@ -14,6 +15,7 @@ from careproof.recommend import recommend
 GOLD = "workspace.careproof.gold_service_index"
 VERIFIED = "workspace.careproof.verified_claims"
 ADDRESS = "city_clean, state_clean, district_clean, pin_clean, pin_status"
+ADDRESS_LOOKUP = ADDRESS + ", admin_status, pin_state_disagreement, country_disagreement"
 GOLD_FIELDS = f"""facility_id, service_key, name, {ADDRESS},
     geo_facility_id, geo_status, admin_status, pin_state_disagreement,
     country_disagreement, candidate_latitude, candidate_longitude,
@@ -22,13 +24,22 @@ GOLD_FIELDS = f"""facility_id, service_key, name, {ADDRESS},
     verification_reason, source_field, claim_text, source_text, source_content_id,
     matched_aliases, source_urls_raw, source_attribution_status"""
 EVIDENCE_PAGE = 6
+WarehouseRead = tuple[list[dict[str, object]], float]
+
+
+class SearchDataSource(Protocol):
+    """Data operations the app needs from a read-only connector."""
+
+    def addresses(self) -> WarehouseRead: ...
+    def service(self, service: str) -> WarehouseRead: ...
+    def evidence(self, service: str, facility: str, offset: int) -> WarehouseRead: ...
 
 
 class DataUnavailable(Exception):
     """Safe text for display in the app."""
 
 
-def connect():
+def connect() -> SearchDataSource:
     warehouse = os.environ.get("DATABRICKS_WAREHOUSE_ID")
     if not warehouse:
         raise DataUnavailable("The SQL warehouse is missing from the app configuration.")
@@ -89,20 +100,32 @@ class Warehouse:
         except (ValueError, OSError):
             raise DataUnavailable("Could not reach or read from Databricks. Check connectivity and sign-in.") from None
 
-    def addresses(self):
+    def addresses(self) -> WarehouseRead:
         return self.read(f"""
-            SELECT to_json(struct({ADDRESS})) FROM (
-                SELECT DISTINCT {ADDRESS} FROM {GOLD}
+            SELECT to_json(struct({ADDRESS_LOOKUP})) FROM (
+                SELECT DISTINCT {ADDRESS_LOOKUP} FROM {GOLD}
             )
         """)
 
-    def service(self, service):
+    def service(self, service: str) -> WarehouseRead:
         return self.read(f"""
-            SELECT to_json(struct({GOLD_FIELDS}))
-            FROM {GOLD} WHERE service_key = :service
+            WITH site_claims AS (
+                SELECT facility_id, source_content_id, sort_array(collect_set(claim_text)) AS sibling_site_claims
+                FROM {VERIFIED}
+                WHERE service_key = :service AND claim_type = 'candidate_claim'
+                  AND evidence_status = 'supported_claim' AND has_service_negation = false
+                  AND instr(source_text, claim_text) > 0
+                  AND lower(claim_text) RLIKE ' (at|in) '
+                GROUP BY facility_id, source_content_id
+            ), candidates AS (
+                SELECT {GOLD_FIELDS}, s.sibling_site_claims
+                FROM {GOLD} g LEFT JOIN site_claims s USING (facility_id, source_content_id)
+                WHERE g.service_key = :service
+            )
+            SELECT to_json(struct(*)) FROM candidates
         """, service=service)
 
-    def evidence(self, service, facility, offset):
+    def evidence(self, service: str, facility: str, offset: int) -> WarehouseRead:
         return self.read(f"""
             SELECT to_json(struct(*)) FROM (
                 SELECT DISTINCT facility_id, source_content_id, source_field, claim_text,

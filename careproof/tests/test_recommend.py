@@ -122,7 +122,7 @@ def test_missing_coords_allow_address_match_without_invented_distance():
 
 
 def test_place_ambiguity_checks_other_services():
-    rows = [gold(), gold("other", state_clean="another state", service_key="mri")]
+    rows = [gold(), gold("other", state_clean="Haryana", service_key="mri")]
     assert recommend(CITY, rows)["reason"] == "ambiguous_place"
     assert recommend(CITY | {"location": "Delhi, Delhi"}, rows)["status"] == "ranked"
 

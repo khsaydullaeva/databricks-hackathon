@@ -12,7 +12,28 @@ def normalize(value):
     return re.sub(r"[\W_]+", " ", text).strip()
 
 
+# Government of India state and UT names. See reports/post_deployment_regression.md.
+INDIAN_STATES_AND_UTS = frozenset({
+    "andhra pradesh", "arunachal pradesh", "assam", "bihar", "chhattisgarh",
+    "goa", "gujarat", "haryana", "himachal pradesh", "jharkhand", "karnataka",
+    "kerala", "madhya pradesh", "maharashtra", "manipur", "meghalaya", "mizoram",
+    "nagaland", "odisha", "punjab", "rajasthan", "sikkim", "tamil nadu",
+    "telangana", "tripura", "uttar pradesh", "uttarakhand", "west bengal",
+    "andaman and nicobar islands", "chandigarh", "dadra and nagar haveli and daman and diu",
+    "delhi", "jammu and kashmir", "ladakh", "lakshadweep", "puducherry",
+})
+
 STATE_ALIASES = {
+    "tamilnadu": "tamil nadu",
+    "telengana": "telangana",
+    "chattisgarh": "chhattisgarh",
+    "uttar prades h": "uttar pradesh",
+    "uttaranchal": "uttarakhand",
+    "orissa": "odisha",
+    "pondicherry": "puducherry",
+    "jammu kashmir": "jammu and kashmir",
+    "m p": "madhya pradesh",
+    "mp": "madhya pradesh",
     "nct of delhi": "delhi",
     "n c t of delhi": "delhi",
     "n c t delhi": "delhi",
@@ -49,8 +70,15 @@ AUDITED_CITIES = {
 
 
 def state_key(value):
-    name = normalize(value)
-    return STATE_ALIASES.get(name, name)
+    name = normalize(value.replace("&", " and ") if isinstance(value, str) else value)
+    state = STATE_ALIASES.get(name, name)
+    return state if state in INDIAN_STATES_AND_UTS else ""
+
+
+def district_key(value):
+    """Normalize administrative labels without guessing district aliases."""
+    name = normalize(value).removeprefix("district of ")
+    return re.sub(r"(?:^| )(?:district|dist)$", "", name).strip()
 
 
 def postal_index(offices):
@@ -59,7 +87,7 @@ def postal_index(offices):
     for office in offices:
         pin = str(office.get("pin", "")).strip()
         state = state_key(office.get("state"))
-        district = normalize(office.get("district"))
+        district = district_key(office.get("district"))
         if re.fullmatch(r"[1-9][0-9]{5}", pin) and state:
             index[pin].add((state, district))
     return index
@@ -71,10 +99,10 @@ def address(row, post):
     state, district_hint = LOCALITY_IN_STATE.get(
         (city, raw_state), (state_key(raw_state), "")
     )
-    district = normalize(row.get("district_clean")) or district_hint
+    district = district_key(row.get("district_clean")) or district_hint
     pin = row.get("pin_clean")
     postal = post.get(pin) if row.get("pin_status") == "format_valid_unverified" else None
-    issue = None
+    issue = "invalid_recorded_state_or_ut" if raw_state and not state else None
     provenance = "dataset_address"
     if postal and state:
         if len(postal) == 1:
@@ -104,6 +132,10 @@ def address(row, post):
         "city": city, "state": state, "district": district,
         "district_provenance": provenance if district else None,
         "issue": issue,
+        "resolution_allowed": bool(state and not issue
+                                   and row.get("admin_status") != "possible_admin_conflict"
+                                   and not row.get("pin_state_disagreement")
+                                   and not row.get("country_disagreement")),
     }
 
 
@@ -121,11 +153,11 @@ def matches(row, admin, kind, value, state, district=""):
     return admin[kind] == value
 
 
-def place_choices(addresses, kind, value, state, district):
+def place_choices(addresses, kind, value, state, district, *, allow_flagged=False):
     """Use distinct administrative places across services, independent of row count."""
     names = set()
     for admin in addresses:
-        if not admin["state"] or admin["issue"]:
+        if not admin["state"] or admin["issue"] or (not allow_flagged and not admin["resolution_allowed"]):
             continue
         for mode in (("city", "district") if kind == "place" else (kind,)):
             if matches({}, admin, mode, value, state, district):

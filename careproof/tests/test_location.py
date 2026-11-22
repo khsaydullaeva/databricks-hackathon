@@ -120,3 +120,106 @@ def test_city_only_delhi_can_resolve_from_nct_new_delhi_addresses():
         gold("new-delhi", city_clean="New Delhi", state_clean="Delhi"),
     ])
     assert [row["facility_id"] for row in result["recommendations"]] == ["new-delhi"]
+
+
+@pytest.mark.parametrize("location", [
+    {"city": "Nagercoil", "state": "Kanyakumari District"},
+    {"pin": "629001", "state": "Kanyakumari District"},
+    "Nagercoil, Kanyakumari District",
+    {"city": "Pune", "state": "Pune District"},
+])
+def test_district_or_city_cannot_be_entered_as_state(location):
+    result = recommend({"service": "dialysis", "location": location}, [gold()])
+    assert result["reason"] == "invalid_location_or_radius"
+    assert "state or union territory" in result["detail"]
+
+
+def test_recorded_district_cannot_poison_cross_service_region_choices():
+    rows = [gold(city_clean="Nagercoil", state_clean="Tamil Nadu", district_clean=None),
+            {"city_clean": "Nagercoil", "state_clean": "Kanyakumari District"},
+            gold("other", service_key="mri", city_clean="Nagercoil", state_clean="Kanyakumari District")]
+    query = {"service": "dialysis", "location": {"city": "Nagercoil"}}
+    audit = {}
+    result = recommend(query, rows, audit=audit)
+    assert audit["parsed_location"]["state"] == ""
+    assert audit["location"]["state"] == "tamil nadu"
+    assert [row["facility_id"] for row in result["recommendations"]] == [rows[0]["facility_id"]]
+
+
+def test_admin_conflict_cannot_introduce_another_state_option():
+    rows = [gold(city_clean="Rampur", state_clean="Uttar Pradesh"),
+            {"city_clean": "Rampur", "state_clean": "Bihar", "admin_status": "possible_admin_conflict"}]
+    result = recommend({"service": "dialysis", "location": {"city": "Rampur"}}, rows)
+    assert result["status"] == "ranked"
+    assert result["recommendations"][0]["resolved_address"]["state"] == "uttar pradesh"
+
+
+@pytest.mark.parametrize("location", [
+    {"city": "Rampur"}, {"city": "Rampur", "state": "Bihar"},
+    {"city": "Rampur", "district": "East District"},
+    {"city": "Rampur", "state": "Bihar", "district": "District of East"},
+    {"city": "Rampur", "district": "East Dist."},
+    {"district": "District of East", "state": "Bihar"},
+])
+def test_recorded_district_and_suffix_variants_match(location):
+    row = gold(city_clean="Rampur", state_clean="Bihar", district_clean="East District")
+    result = recommend({"service": "dialysis", "location": location}, [row])
+    assert result["status"] == "ranked"
+    if "district" in location:
+        assert result["district_validation"] == {
+            "district": "east", "status": "matched", "matched_facilities": 1, "unresolved_facilities": 0}
+
+
+def test_missing_district_stays_unresolved_without_dropping_city_or_state_constraint():
+    matched = gold("city-match", city_clean="Rampur", state_clean="Bihar", district_clean=None)
+    elsewhere = gold("elsewhere", city_clean="Other City", state_clean="Bihar", district_clean=None)
+    audit = {}
+    for state in ({}, {"state": "Bihar"}):
+        result = recommend({"service": "dialysis", "location": {
+            "city": "Rampur", "district": "Not Indexed District", **state}},
+            [matched, elsewhere], audit=audit)
+        assert result["reason"] == "district_membership_unresolved"
+        assert result["recommendations"] == []
+        assert audit["geographic_facilities"] == 0
+        lead, = result["verification_required"]
+        assert lead["facility_id"] == "city-match"
+        assert lead["reason_codes"] == ["district_membership_unresolved"]
+
+
+def test_district_reference_rejects_contradictory_state_without_inferring_facility_membership():
+    row = gold(city_clean="Rampur", state_clean="Bihar", district_clean=None)
+    reference = {"East District": ["Bihar"]}
+    query = {"service": "dialysis", "location": {"city": "Rampur", "district": "East", "state": "Haryana"}}
+    invalid = recommend(query, [row], district_regions=reference)
+    assert invalid["reason"] == "invalid_state_district_combination"
+    assert invalid["district_validation"]["status"] == "invalid_combination"
+    query["location"]["state"] = "Bihar"
+    unresolved = recommend(query, [row], district_regions=reference)
+    assert unresolved["reason"] == "district_membership_unresolved"
+
+
+def test_exact_postal_district_can_match_but_recorded_conflict_remains_for_review():
+    row = gold(city_clean="Rampur", state_clean="Bihar", district_clean=None, pin_clean="800020")
+    post = [{"pin": "800020", "state": "Bihar", "district": "East District"}]
+    query = {"service": "dialysis", "location": {"city": "Rampur", "state": "Bihar", "district": "East"}}
+    assert recommend(query, [row], postal_offices=post)["district_validation"]["status"] == "matched"
+    conflicted = recommend(query, [row | {"admin_status": "possible_admin_conflict"}], postal_offices=post)
+    assert not conflicted["recommendations"]
+    lead, = conflicted["verification_required"]
+    assert {"district_membership_unresolved", "possible_admin_conflict"} <= set(lead["reason_codes"])
+
+
+def test_unknown_district_does_not_broaden_to_a_different_recorded_district():
+    row = gold(city_clean="Rampur", state_clean="Bihar", district_clean="East")
+    result = recommend({"service": "dialysis", "location": {"city": "Rampur", "district": "West"}}, [row])
+    assert result["reason"] == "district_membership_unresolved"
+    assert not result["recommendations"] and not result["verification_required"]
+
+
+def test_authoritative_reference_blocks_conflicting_recorded_state_without_user_state():
+    row = gold(city_clean="Rampur", state_clean="Haryana", district_clean="East")
+    result = recommend({"service": "dialysis", "location": {"city": "Rampur", "district": "East"}},
+                       [row], district_regions={"East": ["Bihar"]})
+    assert not result["recommendations"]
+    assert result["district_validation"]["status"] == "unresolved"
+    assert result["verification_required"][0]["reason_codes"] == ["district_membership_unresolved"]

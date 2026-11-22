@@ -1,0 +1,146 @@
+[
+  {
+    "facility_id": "81f69525-b792-4246-a25f-a98cb67348e9",
+    "service_key": "dialysis",
+    "source_content_id": "d6fe0d96-7580-4a64-aa80-20d113fd6494",
+    "reason_code": "confirmed_record_location_conflict",
+    "source_field": "procedure",
+    "selected_excerpt": "Performs dialysis as a service",
+    "original_field_sha256": "51a42ca78420471321af6f628313d29bf7ad6a5c67f269d0e55ca7ba77c116cd",
+    "reason": "Recorded Chennai and a same-name Namakkal description conflict. Santhi/Tenkasi is a third attribution signal. The generic dialysis excerpt does not resolve the branch.",
+    "review_status": "analyst_reviewed_pending_human_confirmation",
+    "evidence": [
+      {
+        "field": "description",
+        "quote": "Sakthi Hospital is a hospital located in Kondichettipatti, Namakkal, Namakkal district, Tamil Nadu, India."
+      },
+      {
+        "field": "capability",
+        "quote": "Sakthi Hospital is located in Chennai, Tamil Nadu, India"
+      },
+      {
+        "field": "capability",
+        "quote": "Santhi Hospital is a Network Hospital in Star Health Insurance network in TENKASI, Tamil Nadu"
+      }
+    ],
+    "provenance": "Phase 2 full Bronze audit, eligible_adjudications.csv and authenticated Bronze export"
+  },
+  {
+    "facility_id": "c57fbffb-29af-4533-9ea3-6a3fb73715cb",
+    "service_key": "mri",
+    "source_content_id": "63b329d7-7dcd-4358-90eb-9a69a9214b03",
+    "reason_code": "confirmed_mixed_name_and_city",
+    "source_field": "procedure",
+    "selected_excerpt": "Performs MRI scanning",
+    "original_field_sha256": "d563fd5f5b22ed81326e44db41bea537866e34ebb5b208df02b9a90e78ab6145",
+    "reason": "The record explicitly describes Sun Hospital in Cuttack and Sum Hospital in Bhubaneswar. The generic MRI quote cannot resolve the facility.",
+    "review_status": "analyst_reviewed_pending_human_confirmation",
+    "evidence": [
+      {
+        "field": "capability",
+        "quote": "Sum Hospital is located in Kalinga Nagar, Bhubaneswar"
+      },
+      {
+        "field": "procedure",
+        "quote": "Sun Hospital is located in Cuttack, Orissa."
+      },
+      {
+        "field": "capability",
+        "quote": "Sun Hospital is a major hospital in Cuttack, Odisha."
+      }
+    ],
+    "provenance": "Phase 2 full Bronze audit, eligible_adjudications.csv and authenticated Bronze export"
+  },
+  {
+    "facility_id": "994d9383-8c28-4c80-9225-638d5ec81155",
+    "service_key": "mri",
+    "source_content_id": "7b85f104-8cd3-4d40-aae5-ec01210b5871",
+    "reason_code": "suspected_multiple_providers",
+    "source_field": "procedure",
+    "selected_excerpt": "Offers MRI Scan",
+    "original_field_sha256": "9875a491e6cded7bd364f94135f2e0bdffa60f6625bd02700dedc17d13c59dc2",
+    "reason": "The record describes a named oncology centre in Sector-33 and Faith Diagnostic Centre in Sector 44. The generic MRI excerpt cannot be traced to either facility from the available text.",
+    "review_status": "analyst_reviewed_pending_human_confirmation",
+    "evidence": [
+      {
+        "field": "description",
+        "quote": "Chandigarh Cancer & Diagnostic Centre is an Oncology Clinic in Sector-33, Chandigarh."
+      },
+      {
+        "field": "capability",
+        "quote": "Faith Diagnostic Centre is a diagnostic centre located in Sector 44, Chandigarh"
+      }
+    ],
+    "provenance": "Phase 2 full Bronze audit, eligible_adjudications.csv and authenticated Bronze export"
+  },
+  {
+    "facility_id": "b19e36f0-6fb6-44ab-b86c-beba737ba6e8",
+    "service_key": "dialysis",
+    "source_content_id": "d2c9e561-be8c-4a94-b02a-f79c38ff910e",
+    "reason_code": "network_scope_not_facility_specific",
+    "source_field": "procedure",
+    "selected_excerpt": "Provides dialysis services (hemodialysis) at Mediaid Dialysis Centers",
+    "original_field_sha256": "6d79b2ad10496d38e27d3a53d8dbdcaa53c7ae34e76daac167fbbc285b3b1223",
+    "reason": "The selected claim explicitly attaches dialysis to a network spanning several sites. Adipur is named in the network but the text does not establish the listed hospital address as the dialysis site.",
+    "review_status": "analyst_reviewed_pending_human_confirmation",
+    "evidence": [
+      {
+        "field": "capability",
+        "quote": "Mediaid Dialysis Centers operate in Rapar (5 beds), Adipur (12 beds), Bhuj (5 beds), and Bhojai (5 beds)"
+      },
+      {
+        "field": "capability",
+        "quote": "Divine Kutch Life Care Superspeciality Hospital is a superspeciality hospital in Bhuj"
+      }
+    ],
+    "provenance": "Phase 2 full Bronze audit, eligible_adjudications.csv and authenticated Bronze export"
+  },
+  {
+    "facility_id": "2bbc698e-16bf-4123-9795-fd49dfc2cf61",
+    "service_key": "dialysis",
+    "source_content_id": "f2eee135-417d-4c05-86c8-a60ab6c4eb8f",
+    "reason_code": "suspected_cross_facility_attribution",
+    "source_field": "procedure",
+    "selected_excerpt": "Provides dialysis services",
+    "original_field_sha256": "81f2ee89ce7037baa3de2bc996100d79644d50ffcb5a89144d300433ede000e0",
+    "reason": "Golden Hour in Bhusawal and Golden Hospital in Pune are separately described. The generic dialysis line does not name its facility.",
+    "review_status": "analyst_reviewed_pending_human_confirmation",
+    "evidence": [
+      {
+        "field": "description",
+        "quote": "Golden Hour Hospital in Bhusawal, Maharashtra, India."
+      },
+      {
+        "field": "capability",
+        "quote": "Golden Hospital is a hospital in Kharadi, Pune"
+      }
+    ],
+    "provenance": "Phase 2 full Bronze audit, eligible_adjudications.csv and authenticated Bronze export"
+  },
+  {
+    "facility_id": "eb682cd1-f3d7-4138-9186-b8613c32a53e",
+    "service_key": "dialysis",
+    "source_content_id": "e99e485f-fc41-416d-b9dc-184208079f26",
+    "reason_code": "confirmed_mixed_name_and_city",
+    "source_field": "procedure",
+    "selected_excerpt": "Provides dialysis services",
+    "original_field_sha256": "7e3057803ae914e4810a7649374c32a59ad2bfb46eef6d84ddc55e490d820601",
+    "reason": "The record is labeled Samba, but its original description is District Hospital Shopian, and other fields describe public hospitals in other localities. The dialysis line gives no branch.",
+    "review_status": "analyst_reviewed_pending_human_confirmation",
+    "evidence": [
+      {
+        "field": "description",
+        "quote": "District Hospital Shopian"
+      },
+      {
+        "field": "capability",
+        "quote": "Located in Samba, Jammu and Kashmir, India"
+      },
+      {
+        "field": "capability",
+        "quote": "Government District Hospital is listed as a hospital in Choon, Badgam"
+      }
+    ],
+    "provenance": "Phase 2 full Bronze audit, eligible_adjudications.csv and authenticated Bronze export"
+  }
+]

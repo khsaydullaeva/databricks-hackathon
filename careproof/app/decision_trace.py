@@ -26,10 +26,11 @@ def facility_checks(candidate, assessment):
          "FAIL" if claim_type in {"mention_only", "negated"} else "UNCERTAIN"),
         ("No explicit denial", "FAIL" if denial is True else "PASS" if denial is False else "UNCERTAIN"),
         ("No other-facility reference flagged", "UNCERTAIN" if codes is None or not count else
-         "FAIL" if "text_mentions_other_facility_or_branch" in codes else "PASS"),
+         "FAIL" if ("text_mentions_other_facility_or_branch" in codes or assessment.get("other_facility_text")) else "PASS"),
         ("Dataset identity review", "PASS" if count == clear == 1 and codes == [] else
          "UNCERTAIN" if not count or clear is None or codes is None else "FAIL"),
-        ("Geographic quality", "FAIL" if assessment["location_issue"] else "PASS"),
+        ("Geographic quality", "UNCERTAIN" if assessment["location_issue"] == "district_membership_unresolved"
+         else "FAIL" if assessment["location_issue"] else "PASS"),
         ("Distance computed", "PASS" if candidate.get("distance_km") is not None else "NOT EVALUATED"),
         ("Eligible for ranking", "PASS" if "score" in candidate else "FAIL"),
     ]
@@ -38,12 +39,12 @@ def facility_checks(candidate, assessment):
 def counterfactual(candidate, assumptions):
     reasons = candidate.get("reason_codes", [])
     notes = []
-    if "facility_attribution_uncertain" in reasons:
+    if {"facility_attribution_uncertain", "claim_field_other_facility_reference"}.intersection(reasons):
         notes.append("Confirm the named branch and check whether references to other facilities belong to a separate record.")
     if "offering_not_supported" in reasons or "missing_grounded_citation" in reasons:
         notes.append("Find branch-specific evidence that explicitly says the service is offered and resolve any denial.")
     if any(reason in reasons for reason in ("unresolved_geography", "possible_admin_conflict",
-                                             "coordinate_quality_requires_review", "city_pin_conflict",
+                                             "coordinate_quality_requires_review", "city_pin_conflict", "claim_branch_city_conflict",
                                              "locality_pin_conflict", "city_district_conflict", "postal_admin_conflict")):
         notes.append("Confirm the recorded branch address and correct any geographic discrepancy.")
     if "inconsistent_gold_rows" in reasons:
@@ -94,6 +95,7 @@ def build_trace(query, addresses, gold_rows, result, audit=None):
             "coordinate_exclusions": result.get("excluded_location_counts", {}),
             "normalized": audit.get("location") or audit.get("parsed_location"),
             "stop_reason": audit.get("stop_reason"),
+            "district_validation": result.get("district_validation"),
         },
         "funnel": funnel,
         "retrieval": {"address_rows": len(addresses), "gold_rows": len(gold_rows)},

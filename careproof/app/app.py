@@ -18,6 +18,11 @@ SERVICES = {
 }
 PAGE = 5
 REASONS = {
+    "district_membership_unresolved": "The recorded address does not establish membership in the requested district.",
+    "invalid_recorded_state_or_ut": "The recorded state field does not identify an Indian state or union territory.",
+    "alternate_claim_branch_scope_unresolved": "Another supported claim for this service names a different locality or branch. Confirm which branch the offering describes.",
+    "claim_branch_city_conflict": "The service excerpt places the offering in a different city from the recorded address.",
+    "claim_field_other_facility_reference": "The claim's recorded field also describes another named facility. Verify which facility the excerpt describes.",
     "evidence_conflicting": "The record contains conflicting service or facility information.",
     "evidence_rejected": "The evidence includes an explicit denial of the service.",
     "evidence_uncertain": "The recorded text leaves the offering uncertain.",
@@ -142,8 +147,19 @@ def geography_detail(candidate, assumptions):
 
 
 def show_reasons(candidate):
+    hold = candidate.get("reviewed_hold")
     for reason in candidate["reason_codes"]:
-        st.write(REASONS.get(reason, reason.replace("_", " ").capitalize() + "."))
+        if hold and reason == hold["reason_code"]:
+            st.write(hold["reason"])
+        elif reason == "review_hold_source_revision":
+            st.write("A prior attribution hold applies. The current dataset text needs a new review.")
+        else:
+            st.write(REASONS.get(reason, reason.replace("_", " ").capitalize() + "."))
+    if hold:
+        with st.expander("Reviewed hold evidence", type="compact"):
+            st.caption(f'{hold["review_status"].replace("_", " ")} · {hold["provenance"]}')
+            for item in hold["evidence"]:
+                st.text(f'{item["field"]} · {item["quote"]}')
 
 
 def card(candidate, assumptions, position=None):
@@ -287,6 +303,12 @@ def show_facility_audit(candidate, trace, assumptions):
     show_assessment(assessment)
     if assessment and assessment["location_issue"]:
         st.text(f"Geography reason · {assessment['location_issue']}")
+    if assessment and assessment.get("branch_city"):
+        st.text(f"City in the service excerpt · {assessment['branch_city'].title()}")
+    if assessment and assessment.get("alternate_site_text"):
+        st.text(f"Other exact claim for this service · {assessment['alternate_site_text']}")
+    if assessment and assessment.get("other_facility_text"):
+        st.text(f"Separate statement in the claim field · {assessment['other_facility_text']}")
     if candidate["reason_codes"]:
         st.text("Rules that withheld this record · " + ", ".join(candidate["reason_codes"]))
     st.markdown("**What would change this decision?**")
@@ -300,7 +322,10 @@ def show_trace(trace, label):
         retrieval, assessed, decision = trace["retrieval"], trace["evidence"], trace["decision"]
         st.markdown("**1. Request understanding**")
         st.text(f"Service {label} → {request['service_key'] or 'unknown'}")
-        st.text(choice_label(request["location"]))
+        entered = request.get("entered_location", request["location"])
+        st.text("Entered location · " + " · ".join(f"{key} {value}" for key, value in entered.items()))
+        if request.get("place_choice_selected"):
+            st.text("Selected location · " + choice_label(request["location"]))
         st.markdown("**2. Geographic matching**")
         assumptions = geo["assumptions"]
         if assumptions:
@@ -315,6 +340,12 @@ def show_trace(trace, label):
         if normalized:
             st.text("Normalized location · " + " · ".join(
                 f"{key} {value}" for key, value in normalized.items() if value))
+        if geo.get("district_validation"):
+            district_check = geo["district_validation"]
+            st.text(f'District validation · {district_check["status"].replace("_", " ")}'
+                    f' · {district_check["district"]}')
+            if district_check.get("unresolved_facilities"):
+                st.caption(f'{district_check["unresolved_facilities"]} leads require district verification.')
         if not trace["funnel"]:
             st.caption("Location matching stopped before the ranker could assess candidates for this search.")
         if geo["stop_reason"] == "no_unambiguous_indexed_place":
@@ -402,13 +433,16 @@ def show_trace(trace, label):
         st.caption("Confirm the service and branch directly. Ranking points describe dataset evidence and location.")
 
 
-def run_search(query):
+def run_search(query, *, entered_location=None):
     with st.spinner("Checking the CareProof index. The warehouse may take a moment to start…"):
         lookup, lookup_seconds = addresses()
         rows, service_seconds = service_rows(query["service"])
         audit = {}
         result = search(query, lookup, rows, audit=audit)
         result["decision_trace"] = build_trace(query, lookup, rows, result, audit)
+        if entered_location is not None:
+            result["decision_trace"]["request"].update(
+                entered_location=entered_location, place_choice_selected=True)
     return result, lookup_seconds + service_seconds
 
 
@@ -456,14 +490,16 @@ def main():
         if st.button("Use this location"):
             new_query = query | {"location": choice}
             try:
-                new_result, seconds = run_search(new_query)
+                new_result, seconds = run_search(
+                    new_query, entered_location=result["decision_trace"]["request"].get(
+                        "entered_location", query["location"]))
             except DataUnavailable as error:
                 st.error(str(error))
                 return
             st.session_state.active_search = (label, new_query, new_result, seconds)
             st.rerun()
         return
-    if result["reason"] == "invalid_location_or_radius":
+    if result["reason"] in {"invalid_location_or_radius", "invalid_state_district_combination"}:
         st.warning(result["detail"])
         show_trace(result["decision_trace"], label)
         return
@@ -483,6 +519,10 @@ def main():
         st.caption("Ranking points reflect evidence field, address consistency, and proximity when available. "
                    "They do not measure clinical quality, safety, or current availability.")
         show_group(ranked, result["service_key"], "ranked", assumptions)
+    elif result["reason"] == "district_membership_unresolved":
+        st.warning(result["detail"])
+        if reviews:
+            st.caption("The leads below require district verification before they can be considered for ranking.")
     else:
         st.warning("No reliable match. The available records did not meet the ranking criteria.")
     if reviews:

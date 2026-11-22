@@ -7,8 +7,10 @@ from math import asin, cos, isfinite, radians, sin, sqrt
 import re
 import sys
 
-from careproof.location import AUDITED_CITIES, address, matches, place_choices, postal_index, state_key
+from careproof.attribution import claim_site_conflict, other_named_facility
+from careproof.location import AUDITED_CITIES, address, district_key, matches, place_choices, postal_index, state_key
 from careproof.location import normalize as _place
+from careproof.review_holds import load_coordinate_holds, load_review_holds, review_hold
 
 
 EARTH_RADIUS_KM = 6371.0088
@@ -92,21 +94,26 @@ def _parse_location(location):
         if origin is None:
             raise ValueError("Provide valid latitude and longitude.")
         return ("coordinates", origin, "", "")
+    state = state_key(location.get("state"))
+    if "state" in location and not state:
+        raise ValueError("Enter an Indian state or union territory in the State field. Use District for a district name.")
+    district = district_key(location.get("district"))
+    if "district" in location and not district:
+        raise ValueError("Enter a district name in the District field.")
     if "pin" in location:
         pin = str(location["pin"]).strip()
         if not re.fullmatch(r"[1-9][0-9]{5}", pin):
             raise ValueError("Provide a valid six-digit Indian PIN.")
-        return ("pin", pin, state_key(location.get("state")), _place(location.get("district")))
+        return ("pin", pin, state, district)
     fields = modes[2] & location.keys()
     if fields == {"city", "district"}:
         fields = {"city"}
     if len(fields) != 1:
         raise ValueError("Provide one place name.")
     field = next(iter(fields))
-    place = _place(location[field])
-    state = state_key(location.get("state"))
-    district = _place(location.get("district")) if field == "city" else ""
-    if not place or ("state" in location and not state):
+    place = district if field == "district" else _place(location[field])
+    district = district if field == "city" else ""
+    if not place:
         raise ValueError("Provide a place name and an optional state.")
     return (field, place, state, district)
 
@@ -155,6 +162,9 @@ def _location_assessment(row, kind, origin, radius):
                 and _coordinates(row.get("candidate_latitude"), row.get("candidate_longitude")) is None):
             return None, "coordinate_quality_requires_review"
         return None, None
+    hold = load_coordinate_holds().get(row.get("facility_id"))
+    if hold:
+        return None, hold["reason"]
     if row.get("geo_status") != "bbox_pass" or row.get("coordinate_provenance") != "dataset_coordinates_bbox_only":
         return None, "coordinate_quality_requires_review"
     point = _coordinates(row.get("candidate_latitude"), row.get("candidate_longitude"))
@@ -164,7 +174,7 @@ def _location_assessment(row, kind, origin, radius):
     return distance, "outside_radius" if distance > radius else None
 
 
-def recommend(query, rows, *, postal_offices=(), audit=None):
+def recommend(query, rows, *, postal_offices=(), audit=None, review_holds=None, district_regions=None):
     """Return JSON-ready recommendations, review candidates and abstention reasons.
 
     Supply complete Stage 09 rows as mappings, including other services when
@@ -173,6 +183,9 @@ def recommend(query, rows, *, postal_offices=(), audit=None):
     applies to coordinate searches. Optional postal office mappings contain
     pin, state and district. Unknown input produces an abstention.
     If provided, audit is populated with measurements from the executed stages.
+    Explicit review_holds overrides the packaged registry for comparison replays.
+    district_regions may provide an authoritative, complete set of states for
+    a particular district name. Unlisted districts remain unvalidated.
     """
     if audit is not None:
         audit.clear()
@@ -210,8 +223,29 @@ def recommend(query, rows, *, postal_offices=(), audit=None):
     rows = list(rows)
     post = postal_index(postal_offices)
     addresses = {id(row): address(row, post) for row in rows}
+    requested_district = value if kind == "district" else district
+    validated_states = set()
+    if requested_district:
+        validated_states = {state_key(region) for label, regions in (district_regions or {}).items()
+                            if district_key(label) == requested_district for region in regions} - {""}
+        if kind == "pin" and len(post.get(value, ())) == 1:
+            postal_state, postal_district = next(iter(post[value]))
+            if postal_district == requested_district:
+                validated_states = {postal_state}
+        if state and validated_states and state not in validated_states:
+            result.update(reason="invalid_state_district_combination",
+                          detail="The validated district reference disagrees with the entered state or union territory.",
+                          district_validation={"district": requested_district, "status": "invalid_combination"})
+            return result
     if kind in {"place", "city", "district"}:
-        choices = place_choices(addresses.values(), kind, value, state, district)
+        scope_addresses = [admin for admin in addresses.values()
+                           if not validated_states or admin["state"] in validated_states]
+        choices = place_choices(scope_addresses, kind, value, state, district)
+        if not choices:
+            # A unique valid recorded region can still scope verification-only results.
+            flagged = place_choices(scope_addresses, kind, value, state, district, allow_flagged=True)
+            if len(flagged) == 1:
+                choices = flagged
         if len(choices) > 1:
             regions = sorted({choice["state"] for choice in choices})
             result.update(reason="ambiguous_place", matching_states=regions, location_choices=choices)
@@ -223,15 +257,21 @@ def recommend(query, rows, *, postal_offices=(), audit=None):
                 kind = "city" if "city" in choice else "district"
             district = choice.get("district", "") if kind == "city" else ""
         elif not state:
-            if audit is not None:
-                audit["stop_reason"] = "no_unambiguous_indexed_place"
-            result["reason"] = "no_reliable_match"
-            return result
+            if requested_district:
+                # A unique recorded city/state may scope review leads, never prove district membership.
+                regions = {choice["state"] for choice in place_choices(scope_addresses, kind, value, "", "")}
+                if kind == "city" and len(regions) == 1:
+                    state = regions.pop()
+            else:
+                if audit is not None:
+                    audit["stop_reason"] = "no_unambiguous_indexed_place"
+                result["reason"] = "no_reliable_match"
+                return result
         if kind == "place":
             kind = "city"
     elif kind == "pin":
         regions = {(admin["state"], admin["district"]) for row in rows
-                   if (admin := addresses[id(row)])["state"] and not admin["issue"]
+                   if (admin := addresses[id(row)])["resolution_allowed"]
                    and matches(row, admin, kind, value, state, district)}
         if post.get(value):
             regions = {(region, area) for region, area in post[value]
@@ -267,10 +307,30 @@ def recommend(query, rows, *, postal_offices=(), audit=None):
 
     if audit is not None:
         audit["unique_service_facilities"] = len(by_facility)
+    holds = load_review_holds() if review_holds is None else review_holds
     excluded = Counter()
+    known_cities = sorted({admin["city"] for admin in addresses.values() if admin["city"]},
+                          key=lambda city: (-len(city), city))
+    district_matches = district_unresolved = 0
     for facility_id, records in sorted(by_facility.items()):
         matching = [row for row in records if kind == "coordinates"
                     or matches(row, addresses[id(row)], kind, value, state, district)]
+        uncertain_district = False
+        if requested_district:
+            supported = [row for row in matching if addresses[id(row)]["resolution_allowed"]
+                         and (not validated_states or addresses[id(row)]["state"] in validated_states)]
+            if supported:
+                matching = supported
+                district_matches += 1
+            else:
+                if kind in {"city", "pin"} and (state or kind == "pin"):
+                    matching = matching or [
+                        row for row in records if not addresses[id(row)]["district"]
+                        and matches(row, addresses[id(row)], kind, value, state)
+                    ]
+                if matching:
+                    uncertain_district = True
+                    district_unresolved += 1
         if not matching:
             if audit is not None:
                 audit["unmatched_address_facilities"] += 1
@@ -278,11 +338,12 @@ def recommend(query, rows, *, postal_offices=(), audit=None):
         if len(records) > 1:
             if audit is not None and kind == "coordinates":
                 audit["duplicates_held_before_range"] += 1
-            if audit is not None and kind != "coordinates":
+            if audit is not None and kind != "coordinates" and not uncertain_district:
                 audit["geographic_rows"] += len(matching)
                 audit["geographic_facilities"] += 1
             result["verification_required"].append({
-                "facility_id": facility_id, "reason_codes": ["inconsistent_gold_rows"],
+                "facility_id": facility_id, "reason_codes": ["inconsistent_gold_rows"]
+                + (["district_membership_unresolved"] if uncertain_district else []),
             })
             continue
         row = matching[0]
@@ -292,8 +353,9 @@ def recommend(query, rows, *, postal_offices=(), audit=None):
             excluded[location_issue] += 1
             continue
         if audit is not None:
-            audit["geographic_rows"] += 1
-            audit["geographic_facilities"] += 1
+            if not uncertain_district:
+                audit["geographic_rows"] += 1
+                audit["geographic_facilities"] += 1
             audit["assessed_facilities"] += 1
         citation = _citation(row)
         issues = _evidence_issues(row)
@@ -302,12 +364,43 @@ def recommend(query, rows, *, postal_offices=(), audit=None):
         admin = addresses[id(row)]
         if location_issue:
             issues.append(location_issue)
+        if uncertain_district:
+            issues.append("district_membership_unresolved")
         if admin["issue"]:
             issues.append(admin["issue"])
             distance = None
+        branch_city = None
+        other_facility_text = None
+        alternate_site_text = None
+        if citation and not issues:
+            branch_city = claim_site_conflict(citation["claim_text"], admin["city"], known_cities)
+            other_facility_text = other_named_facility(row.get("source_text"), row.get("name"))
+            if branch_city:
+                issues.append("claim_branch_city_conflict")
+                distance = None
+            if other_facility_text:
+                issues.append("claim_field_other_facility_reference")
+            if not branch_city:
+                for text in row.get("sibling_site_claims") or ():
+                    if text != citation["claim_text"] and claim_site_conflict(text, admin["city"], known_cities):
+                        alternate_site_text = text
+                        issues.append("alternate_claim_branch_scope_unresolved")
+                        distance = None
+                        break
+        hold = review_hold(row, holds)
+        if hold:
+            issues.append(hold["reason_code"] if hold["status"] == "matched_evidence"
+                          else "review_hold_source_revision")
+            distance = None
         if audit is not None:
             audit["screenings"][facility_id] = {
-                "location_issue": location_issue or admin["issue"],
+                "location_issue": location_issue or admin["issue"] or
+                ("district_membership_unresolved" if uncertain_district else None) or
+                ("claim_branch_city_conflict" if branch_city else
+                 "alternate_claim_branch_scope_unresolved" if alternate_site_text else None),
+                "branch_city": branch_city,
+                "other_facility_text": other_facility_text,
+                "alternate_site_text": alternate_site_text,
                 "claim_type": row.get("claim_type"),
                 "claim_reason": row.get("claim_reason"),
                 "has_service_negation": row.get("has_service_negation"),
@@ -325,8 +418,10 @@ def recommend(query, rows, *, postal_offices=(), audit=None):
             "city": row.get("city_clean"), "district": row.get("district_clean"),
             "state": row.get("state_clean"), "pin": row.get("pin_clean"),
             "geo_status": row.get("geo_status"), "admin_status": row.get("admin_status"),
-            "resolved_address": admin,
+            "resolved_address": {key: value for key, value in admin.items() if key != "resolution_allowed"},
         }
+        if hold:
+            candidate["reviewed_hold"] = hold
         if issues:
             result["verification_required"].append(candidate)
             continue
@@ -347,8 +442,17 @@ def recommend(query, rows, *, postal_offices=(), audit=None):
         "tie_breaker": "Facility ID ascending.",
         "interpretation": "Heuristic ranking points for dataset evidence and location.",
     }
+    if requested_district:
+        result["district_validation"] = {"district": requested_district,
+                                         "status": "matched" if district_matches else "unresolved",
+                                         "matched_facilities": district_matches,
+                                         "unresolved_facilities": district_unresolved}
     if result["recommendations"]:
         result["status"] = "ranked"
+    elif requested_district and not district_matches:
+        result.update(reason="district_membership_unresolved",
+                      detail="Available address evidence could not establish a match to the requested district. "
+                             "Facility coverage within the district remains unknown.")
     else:
         result["reason"] = "no_reliable_match"
     return result
@@ -363,7 +467,8 @@ def main():
             payload = json.load(source)
     else:
         payload = json.load(sys.stdin)
-    json.dump(recommend(payload["query"], payload["rows"], postal_offices=payload.get("postal_offices", ())), sys.stdout, indent=2, allow_nan=False)
+    json.dump(recommend(payload["query"], payload["rows"], postal_offices=payload.get("postal_offices", ()),
+                        district_regions=payload.get("district_regions")), sys.stdout, indent=2, allow_nan=False)
     print()
 
 

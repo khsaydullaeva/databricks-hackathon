@@ -13,9 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "app"
 
 CASES = [
-    ("dialysis", "Jaipur", 2), ("mri", "Jaipur", 4), ("nicu", "Jaipur", 2),
+    ("dialysis", "Jaipur", 2), ("mri", "Jaipur", 2), ("nicu", "Jaipur", 2),
     ("dialysis", "Delhi", 1), ("mri", "New Delhi", 5),
-    ("dialysis", "Lucknow", 5), ("dialysis", "Patna", 4), ("dialysis", "Mumbai", 4),
+    ("dialysis", "Lucknow", 5), ("dialysis", "Patna", 3), ("dialysis", "Mumbai", 4),
     ("cardiac_surgery", "Jaipur", 0),
 ]
 
@@ -462,3 +462,16 @@ def test_funnel_counts_screened_facilities_even_on_abstention(capture):
     assert trace["funnel"]["assessed_facilities"] == trace["decision"]["review"] == 6
     assert trace["funnel"]["offering"] == {"FAIL": 6}
     assert equal_weight_sensitivity(trace["ranking"], trace["scoring"]) == []
+
+
+def test_ui_unresolved_district_shows_uncertainty_and_preserves_input(ui):
+    app, _ = ui
+    app.run()
+    app.text_input[0].input("Jaipur")
+    app.text_input[2].input("Example District")
+    app.button[0].click().run()
+    assert not app.exception
+    assert any("could not establish a match to the requested district" in item.value for item in app.warning)
+    assert not any("Dataset-supported facilities" in heading.value for heading in app.subheader)
+    assert any("district Example District" in item.value for item in app.text)
+    assert any(section.label.startswith("Requires verification") for section in app.expander)
