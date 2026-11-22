@@ -507,3 +507,15 @@ def test_ai_reader_attached_as_badge_and_caution(gold):
     assert by["F1"]["ai_reader"]["verdict"] == "offered"
     assert any(c.startswith("AI reader:") for c in by["F4"]["cautions"])
     assert rt_.ai_checks[("F2", "dialysis")]["verdict"] == "unverified"  # invented quote is not used
+
+
+def test_grounding_quote_pairing_ellipsis_and_name_variants(rt):
+    from findcare.agent import Tools, _quoted_spans, check_grounding
+    from findcare.text import norm
+
+    assert _quoted_spans('"Strong" evidence level, confirmed. "Performs hemodialysis"') == ["Performs hemodialysis"]
+    outs = [Tools(rt).search_facilities("dialysis", "Jaipur")]
+    names = set(rt.facilities["name"].map(norm))
+    g = check_grounding('Jaipur Kidney Care Hospital has "Strong" evidence: "Performs ... hemodialysis" and "Performs hemodialysis".', outs, names)
+    assert g["ok"], g
+    assert Tools(rt).search_facilities("dialysis", "")["status"] == "missing_location"

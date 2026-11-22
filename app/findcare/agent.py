@@ -110,10 +110,10 @@ class LLM:
             body["tools"] = tools
         headers = {**self.cfg.authenticate(), "Content-Type": "application/json"}
         url = f"{self.cfg.host.rstrip('/')}/serving-endpoints/{self.endpoint}/invocations"
-        for attempt in range(3):
+        for attempt in range(6):
             r = requests.post(url, headers=headers, json=body, timeout=120)
-            if r.status_code in (429, 503) and attempt < 2:
-                time.sleep(2 * (attempt + 1))
+            if r.status_code in (429, 500, 502, 503, 504) and attempt < 5:
+                time.sleep(min(20, 2 ** attempt))  # back off on rate limits / transient errors
                 continue
             r.raise_for_status()
             return r.json()["choices"][0]["message"]
@@ -191,6 +191,8 @@ class Tools:
         svc = self._service(service)
         if svc is None:
             return None, None, {"status": "unknown_service", "error": f"Unknown service '{service}'.", "services": _SERVICE_ENUM}
+        if not str(location or "").strip():
+            return svc, None, {"status": "missing_location", "hint": "Ask the user where the patient is (city, district, PIN or coordinates)."}
         loc = self._loc(location)
         if not loc.ok:
             return svc, None, {"status": "location_not_found", "error": loc.error}
@@ -290,21 +292,35 @@ _OVERCLAIM_RE = re.compile(r"\b(?:we are|we're|i am|i'm)?\s*\d{1,3}\s?%\s*(?:sur
                            r"|\b(?:sure|certain|confident)\s+(?:at|of)\s+\d{1,3}\s?%", re.I)
 
 
+def _quoted_spans(text: str) -> list[str]:
+    """Quoted spans of >= 12 chars, pairing quote marks in order (so the text BETWEEN two quotes is never
+    mistaken for a quote, e.g. '"Strong" evidence ... "1.5T MRI"')."""
+    out = [m.group(1) for m in re.finditer(r"“([^”]{12,400})”", text)]
+    marks = [m.start() for m in re.finditer(r'"', text)]
+    for a, b in zip(marks[0::2], marks[1::2]):
+        span = text[a + 1:b].strip()
+        if len(span) >= 12:
+            out.append(span)
+    return out
+
+
 def check_grounding(answer: str, tool_outputs: list[dict], all_names: set[str]) -> dict:
     """Every quote and facility named in the answer must come from the tool outputs."""
     blob = json.dumps(tool_outputs, ensure_ascii=False)
     blob_n = norm(blob)
     issues = []
-    quotes = [q.strip() for q in _QUOTE_RE.findall(answer or "")]
+    quotes = _quoted_spans(answer or "")
     for q in quotes:
-        qn = norm(q.rstrip(".…").removesuffix("..."))
-        if qn and qn not in blob_n:
+        # a quote abbreviated with "..." is fine if every fragment is genuine
+        frags = [norm(f) for f in re.split(r"\.\.\.|…", q) if len(norm(f)) >= 8]
+        if frags and not all(f in blob_n for f in frags):
             issues.append(f"quote not found in tool results: “{q[:80]}”")
     ans_n = f" {norm(answer)} "
-    allowed = {n for n in all_names if n in blob_n}
+    tool_names = {norm(m) for m in re.findall(r'"name":\s?"([^"]+)"', blob)}
     mentioned = [n for n in all_names if len(n) >= 10 and len(n.split()) >= 2 and f" {n} " in ans_n]
     for n in mentioned:
-        if n not in allowed:
+        # allowed if it is (part of) a facility name returned by a tool, e.g. "Care Hospital" in "CARE Hospitals Nagpur"
+        if not any(n in t or t in n for t in tool_names):
             issues.append(f"facility not in tool results: {n.title()}")
     dists = [float(x) for x in re.findall(r'"distance_km":\s?(\d+(?:\.\d+)?)', blob)] + \
             [float(x) for x in re.findall(r'"searched_radius_km":\s?(\d+(?:\.\d+)?)', blob)] + \

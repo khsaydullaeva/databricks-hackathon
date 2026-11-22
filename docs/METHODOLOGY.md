@@ -123,6 +123,42 @@ These ideas come from our teammate's CareProof solution, which is in the `carepr
 - **Decision funnel.** Every search reports how many facilities survived each step, and why the others dropped out.
 - **Equal-weight sensitivity.** Every search reports whether the #1 answer would change if all four factors counted equally.
 
+## 2e. The AI layer: agentic, but grounded
+
+We use AI where it adds value, but facts never come from the model. The model plans and explains; tested, audited code supplies every fact.
+
+**Care-finding agent** (`app/findcare/agent.py`, "Ask the assistant" in the app). Llama 3.3 70B runs on the Databricks Foundation Model API, with tool calling.
+
+- **What the model does:** turns a free-text request ("her kidneys failed, she's near Gaya and can't travel far", or "dialysis kahan milega Varanasi mein?") into tool calls. It asks when the place is ambiguous or missing, handles follow-ups ("why is #1 above #2?", "government hospitals only"), and writes the answer.
+- **Its five tools** wrap the pipeline described above:
+  - `resolve_location`
+  - `search_facilities`, which applies the safety checks and can decline to rank
+  - `get_facility_evidence`
+  - `district_health_context`
+  - `explain_ranking`
+- **Grounding check before any answer is shown:**
+  - every quoted phrase (including ones abbreviated with "…") must appear in the tool results;
+  - every facility named must have been returned by a tool;
+  - distances must match the tool results;
+  - phrases like "we are 65% sure" are rejected, because the calibration is a website-confirmation rate, not a probability.
+
+  If the answer fails, the model gets one chance to fix it. If it fails again, the user sees a summary built directly from the tool results instead.
+- **Tracing:** every LLM and tool call is recorded with MLflow, in the experiment `findcare-agent`. In the app, "How the assistant decided" lists each tool call and its result.
+
+**AI claim checker** (notebook `03b`, run with `ai_query` in SQL). Llama 3.3 re-read 2,471 claims for dialysis, emergency C-section and NICU. For each it returned a verdict (*offered / not_offered / planned / other_facility / unclear*) and a supporting quote copied word for word. A verdict whose quote isn't found in the record is discarded; that happened 27 times.
+
+Results:
+- **Some extra signal for Strong claims:** the hospital's own website confirmed the service 65% of the time when the AI also said "offered", and 55% when it didn't. For Moderate claims the AI added nothing.
+- **891 claims are backed by all three sources:** our rules, the AI reader and the hospital's own website.
+- **How we use it:** the AI reader appears as a badge on each card, and its doubts become cautions. We don't use it as a hard filter, because the data shows its signal is modest.
+
+**Evaluation** (`scripts/evaluate_agent.py`, MLflow GenAI evaluate, 20 realistic cases; see [agent_eval_results.md](agent_eval_results.md)). The test cases cover condition-to-service mapping, Hinglish, PIN codes, coordinates, a government-only request, an ambiguous place, a missing place, and a medical-advice question the agent should decline. There are 9 deterministic checks plus an AI judge (Llama 4 Maverick) that checks for plain language, honest uncertainty and no medical advice.
+
+On the latest run:
+- 100% correct service, location, clarifying questions, declining out-of-scope questions, respecting "government only", and telling users to call ahead.
+- The model's own answer passed the grounding check 85–90% of the time across runs. In every remaining case the check caught the problem and the verified summary was shown, so **100% of the answers users saw were verified**.
+- The AI judge passed 90%.
+
 ## 3. Trust: is the record internally consistent?
 
 `trust = clamp(1 − Σ penalties, 0.1, 1) × (0.85 + 0.15 × completeness)`
