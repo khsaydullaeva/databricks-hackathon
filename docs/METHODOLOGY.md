@@ -110,7 +110,7 @@ Records with priority ≥ 2 are marked `needs_review`. The app still shows them,
 These ideas come from our teammate's CareProof solution, which is in the `careproof/` folder with its own SQL pipeline, app and audit.
 
 - **Attribution guard.** A quote can describe a *different* facility ("Katyani Hospital is a General Surgery Clinic in Zirakpur" inside the record for *Kalyani* Hospital) or a different branch city ("Provides dialysis at Namakkal"). We detect both:
-  - A record whose text declares another facility is flagged as possibly mixed. That's 651 facilities, mostly near-identical names the upstream data merged.
+  - A record whose text declares another facility is flagged as possibly mixed. That's 635 facilities, mostly near-identical names the upstream data merged.
   - A claim whose naming quotes all describe someone else doesn't count as evidence.
 - **Analyst review holds.** CareProof's hand-reviewed facility × service holds and coordinate holds (`app/findcare/data/*.json`) withhold those pairs, and the app shows the analyst's reason and quotes.
 - **Safety mode, on by default.** A facility is ranked only if all four checks pass:
