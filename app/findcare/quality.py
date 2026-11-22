@@ -86,8 +86,8 @@ def assess(fac: pd.DataFrame, pin_lookup: pd.DataFrame, district_lookup: pd.Data
         vote_pin = (c["state_norm"] == c["pin_state_norm"]).astype(int) + (c["city_norm"] == c["pin_district_norm"]).astype(int)
         vote_coords = (c["state_norm"].to_numpy() == c_state).astype(int) + (c["city_norm"].to_numpy() == c_dist).astype(int)
         f.loc[rest, "use_pin_over_coords"] = (vote_pin.to_numpy() > vote_coords)
-        f.loc[rest, "conflict_basis"] = "the record's city/state text agrees better with " + np.where(
-            vote_pin.to_numpy() > vote_coords, "the postcode", "the coordinates (or neither)")
+        f.loc[rest, "conflict_basis"] = ["the record's city/state text agrees better with " + ("the postcode" if p_ else "the coordinates (or neither)")
+                                         for p_ in (vote_pin.to_numpy() > vote_coords)]
 
     # --- effective location used for distance -----------------------------------
     use_coords = f["coord_valid"] & ~f["use_pin_over_coords"]
@@ -182,7 +182,9 @@ def _nearest_idx(lat, lon, clat, clon, chunk: int = 2000) -> np.ndarray:
 
 def _duplicate_groups(f: pd.DataFrame) -> pd.Series:
     """Records with the same normalised name within 2 km get the same group id."""
-    groups = pd.Series(f["facility_id"].to_numpy(), index=f.index, dtype=object)
+    # explicit copy: on pandas 1.5 (Databricks serverless) to_numpy() is a view, and writing group ids
+    # into it silently overwrote facility_id
+    groups = pd.Series(f["facility_id"].to_numpy(copy=True), index=f.index, dtype=object)
     for _, g in f[f["eff_lat"].notna() & (f["name_norm"] != "")].groupby("name_norm"):
         if len(g) < 2:
             continue

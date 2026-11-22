@@ -17,6 +17,12 @@ This branch merges two team solutions:
 
 The app in `app/` uses CareProof's best ideas directly: safety mode with abstention, the attribution guard, analyst holds, the decision funnel and the equal-weight check. See [docs/METHODOLOGY.md §2d](docs/METHODOLOGY.md).
 
+## Live deployment
+
+- **App:** https://find-right-care-7474660607277698.aws.databricksapps.com (Databricks App `find-right-care`, workspace `dbc-35db76e6-0782`). You need workspace access to open it.
+- **Tables:** `workspace.findcare.*`, built by notebooks 01 → 02 → 02b → 03 on serverless compute.
+- **Note:** serverless runs pandas 1.5.3 and numpy 1.23.5. The test suite passes on both pandas 1.5.3 and pandas 3.
+
 ## Who it's for
 
 | User | Workflow |
