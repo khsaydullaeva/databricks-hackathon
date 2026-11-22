@@ -408,3 +408,17 @@ def test_analyst_holds_load_and_map_services():
     h = review_holds()
     assert h and all(sid in {"dialysis", "mri", "nicu", "emergency_csection", "cardiac_surgery", "trauma", "emergency"} for _, sid in h)
     assert all(v["reason"] for v in h.values())
+
+
+def test_structured_location_pickers(rt):
+    from findcare.geo import city_options, location_from_city, location_from_district, location_from_point
+
+    c = city_options(rt.place_index)
+    row = c[c["label"] == "Jaipur, Rajasthan"].iloc[0]
+    loc = location_from_city(row, rt.district_lookup)
+    assert loc.ok and loc.district == "Jaipur" and loc.method == "name:city"
+    d = location_from_district("bihar", "aurangabad", rt.district_lookup)
+    assert d.ok and abs(d.lat - 24.75) < 0.1 and "district centre" in d.warnings[0]
+    p = location_from_point(25.61, 85.14, rt.district_lookup)
+    assert p.ok and p.district == "Patna" and "pinned point" in p.label
+    assert not location_from_point(40.0, 85.0, rt.district_lookup).ok  # outside India

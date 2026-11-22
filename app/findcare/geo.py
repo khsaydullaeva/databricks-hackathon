@@ -353,3 +353,45 @@ def resolve_location(query: str, pin_lookup: pd.DataFrame, district_lookup: pd.D
     return Location(ok=True, lat=pick["lat"], lon=pick["lon"], label=pick["display"], method=f"name:{pick['kind']}",
                     precision_km=KIND_PRECISION_KM.get(pick["kind"], 10.0), district_norm=pick["district_norm"],
                     state_norm=pick["state_norm"], district=district, state=state, warnings=warnings, alternatives=alternatives)
+
+
+# ----------------------------------------------------------------------------- structured location pickers (UI)
+def city_options(place_index: pd.DataFrame) -> pd.DataFrame:
+    """Cities known from facility records (>= 2 facilities), one row per city+state, for a dropdown."""
+    c = place_index[place_index["kind"] == "city"].dropna(subset=["lat", "lon"]).copy()
+    c["label"] = c["name_norm"].str.title() + ", " + c["state_norm"].str.title()
+    return c.sort_values(["label"]).drop_duplicates("label").reset_index(drop=True)
+
+
+def _titles(district_lookup: pd.DataFrame, state_norm, district_norm):
+    d = district_lookup[(district_lookup["state_norm"] == state_norm) & (district_lookup["district_norm"] == district_norm)]
+    if d.empty:
+        return (district_norm or "").title() or None, (state_norm or "").title() or None
+    return str(d.iloc[0]["district"]).title(), str(d.iloc[0]["state"]).title()
+
+
+def location_from_city(row, district_lookup: pd.DataFrame) -> Location:
+    district, state = _titles(district_lookup, row["state_norm"], row["district_norm"])
+    return Location(ok=True, lat=float(row["lat"]), lon=float(row["lon"]), label=row["label"], method="name:city",
+                    precision_km=KIND_PRECISION_KM["city"], district_norm=row["district_norm"], state_norm=row["state_norm"],
+                    district=district, state=state)
+
+
+def location_from_district(state_norm: str, district_norm: str, district_lookup: pd.DataFrame) -> Location:
+    d = district_lookup[(district_lookup["state_norm"] == state_norm) & (district_lookup["district_norm"] == district_norm)]
+    if d.empty or pd.isna(d.iloc[0]["lat"]):
+        return Location(ok=False, error="No coordinates for this district in the PIN directory.")
+    r = d.iloc[0]
+    district, state = str(r["district"]).title(), str(r["state"]).title()
+    loc = Location(ok=True, lat=float(r["lat"]), lon=float(r["lon"]), label=f"{district} district, {state}", method="name:district",
+                   precision_km=KIND_PRECISION_KM["district"], district_norm=district_norm, state_norm=state_norm,
+                   district=district, state=state)
+    loc.warnings.append("Searching from the district centre (median of its post offices); for a precise start point, use a PIN or the map.")
+    return loc
+
+
+def location_from_point(lat: float, lon: float, district_lookup: pd.DataFrame) -> Location:
+    loc = resolve_location(f"{lat}, {lon}", pd.DataFrame(columns=["pincode"]), district_lookup, pd.DataFrame(columns=["name_norm"]))
+    if loc.ok:
+        loc.label = f"the pinned point ({lat:.4f}, {lon:.4f})" + (f" · {loc.district}, {loc.state}" if loc.district else "")
+    return loc

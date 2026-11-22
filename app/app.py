@@ -7,11 +7,14 @@ uncertainty stated rather than hidden.
 
 from __future__ import annotations
 
+import re
+from dataclasses import asdict
+
 import pandas as pd
 import streamlit as st
 
 from data import load_tables
-from findcare.geo import resolve_location
+from findcare.geo import Location, city_options, location_from_city, location_from_district, location_from_point, resolve_location
 from findcare.nfhs import district_context
 from findcare.pipeline import Runtime
 from findcare.ranking import DEFAULT_WEIGHTS, recommend
@@ -72,35 +75,99 @@ st.title("🏥 Find the right care")
 st.markdown("Tell us what the patient needs and where they are. We'll suggest facilities **and show exactly why** — "
             "including how sure we are. *Always phone the facility before travelling.*")
 
-with st.form("search"):
-    c1, c2 = st.columns([1, 1])
-    labels = [s.label for s in SERVICES]
-    service_label = c1.selectbox("What care does the patient need?", labels, index=0)
-    location_q = c2.text_input("Where is the patient?", placeholder="e.g. Gaya · 800001 · Aurangabad, Bihar · 25.61, 85.14")
-    c3, c4, c5 = st.columns([2, 2, 1])
-    radius = c3.select_slider("Search within", options=[10, 25, 50, 100, 200], value=50, format_func=lambda x: f"{x} km")
-    top_k = c4.select_slider("Show up to", options=[3, 5, 10], value=5, format_func=lambda x: f"{x} options")
-    c5.write("")
-    submitted = c5.form_submit_button("Find care", type="primary", width="stretch")
+labels = [s.label for s in SERVICES]
+service_label = st.selectbox("**1. What care does the patient need?**", labels, index=0)
 
-if submitted:
-    st.session_state["last_search"] = {"service": service_label, "location": location_q, "radius": radius, "top_k": top_k}
+st.markdown("**2. Where is the patient?**")
+MODES = ["🏙️ City", "🗺️ District", "📮 PIN code", "📍 Point on map"]
+mode = st.radio("How do you want to give the location?", MODES, horizontal=True, key="loc_mode")
+
+
+@st.cache_resource
+def pickers():
+    dl = rt.district_lookup.dropna(subset=["lat", "lon"])
+    return city_options(rt.place_index), dl.sort_values(["state_norm", "district_norm"])
+
+
+cities, districts = pickers()
+pending = None  # Location chosen in the picker, used when "Find care" is pressed
+
+if mode == MODES[0]:
+    i = st.selectbox("City", range(len(cities)), index=None, format_func=lambda i: cities.at[i, "label"],
+                     placeholder="Start typing a city name…")
+    st.caption(f"{len(cities)} cities that have facilities in the dataset. Not listed? Use District, PIN code or the map.")
+    if i is not None:
+        pending = location_from_city(cities.iloc[i], rt.district_lookup)
+
+elif mode == MODES[1]:
+    c1, c2 = st.columns(2)
+    states = sorted(districts["state_norm"].unique())
+    st_sel = c1.selectbox("State / UT", states, index=None, format_func=str.title, placeholder="Choose a state…")
+    if st_sel:
+        ds = districts[districts["state_norm"] == st_sel]
+        d_sel = c2.selectbox("District", ds["district_norm"].tolist(), index=None,
+                             format_func=lambda d: str(ds.loc[ds["district_norm"] == d, "district"].iloc[0]).title(),
+                             placeholder="Choose a district…")
+        if d_sel:
+            pending = location_from_district(st_sel, d_sel, rt.district_lookup)
+
+elif mode == MODES[2]:
+    pin = st.text_input("6-digit PIN code", max_chars=6, placeholder="e.g. 800001").strip()
+    if pin:
+        if not re.fullmatch(r"[1-9]\d{5}", pin):
+            st.caption(":red[A PIN code has 6 digits and doesn't start with 0.]")
+        else:
+            cand = resolve_location(pin, rt.pin_lookup, rt.district_lookup, rt.place_index)
+            if cand.ok:
+                pending = cand
+                st.caption(f"✓ {cand.label}")
+            else:
+                st.caption(f":red[{cand.error}]")
+
+else:
+    import folium
+    from streamlit_folium import st_folium
+
+    st.caption("Click on the map where the patient is (zoom in for accuracy), or type the coordinates below.")
+    lat0, lon0 = st.session_state.get("lat_in"), st.session_state.get("lon_in")
+    has_pt = lat0 is not None and lon0 is not None
+    fmap = folium.Map(location=[lat0, lon0] if has_pt else [22.6, 79.0], zoom_start=11 if has_pt else 5, tiles="OpenStreetMap")
+    if has_pt:
+        folium.Marker([lat0, lon0], tooltip="Patient location", icon=folium.Icon(color="blue", icon="user")).add_to(fmap)
+    out = st_folium(fmap, height=380, use_container_width=True, returned_objects=["last_clicked"], key="pick_map")
+    click = (out or {}).get("last_clicked")
+    if click:
+        new_pt = (round(click["lat"], 5), round(click["lng"], 5))
+        if new_pt != (lat0, lon0):
+            st.session_state["lat_in"], st.session_state["lon_in"] = new_pt
+            st.rerun()
+    c1, c2 = st.columns(2)
+    lat = c1.number_input("Latitude", min_value=6.0, max_value=37.6, format="%.5f", key="lat_in", placeholder="e.g. 25.61",
+                          **({} if "lat_in" in st.session_state else {"value": None}))
+    lon = c2.number_input("Longitude", min_value=68.0, max_value=97.5, format="%.5f", key="lon_in", placeholder="e.g. 85.14",
+                          **({} if "lon_in" in st.session_state else {"value": None}))
+    if lat is not None and lon is not None:
+        cand = location_from_point(lat, lon, rt.district_lookup)
+        if cand.ok:
+            pending = cand
+            st.caption(f"✓ {cand.label}")
+        else:
+            st.caption(f":red[{cand.error}]")
+
+c3, c4, c5 = st.columns([2, 2, 1])
+radius = c3.select_slider("Search within", options=[10, 25, 50, 100, 200], value=50, format_func=lambda x: f"{x} km")
+top_k = c4.select_slider("Show up to", options=[3, 5, 10], value=5, format_func=lambda x: f"{x} options")
+c5.write("")
+if c5.button("Find care", type="primary", width="stretch", disabled=pending is None):
+    st.session_state["last_search"] = {"service": service_label, "loc": asdict(pending), "radius": radius, "top_k": top_k}
 
 search = st.session_state.get("last_search")
 if not search:
-    st.info("Example: **Dialysis (kidney)** near **Gaya**, or **Emergency C-section** near PIN **226001**.")
+    st.info("Choose the care needed and the patient's location, then press **Find care**.")
     st.stop()
 
 svc = next(s for s in SERVICES if s.label == search["service"])
-loc = resolve_location(search["location"], rt.pin_lookup, rt.district_lookup, rt.place_index)
-if not loc.ok:
-    st.error(loc.error)
-    st.stop()
-if len(loc.alternatives) > 1:
-    pick = st.radio("Several places have this name — which one?", range(len(loc.alternatives)), horizontal=True,
-                    format_func=lambda i: loc.alternatives[i]["display"], key=f"alt::{search['location']}")
-    loc = resolve_location(search["location"], rt.pin_lookup, rt.district_lookup, rt.place_index, choice=pick)
-    loc.warnings = [x for x in loc.warnings if "matches" not in x]
+loc = Location(**search["loc"])
 
 res = recommend(rt, svc, loc, radius_km=search["radius"], top_k=search["top_k"], weights=w, min_evidence=min_ev,
                 only_confirmed=only_confirmed, hide_review=hide_review, guarded=safety)
