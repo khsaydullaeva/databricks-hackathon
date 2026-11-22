@@ -215,7 +215,8 @@ class Tools:
             "confirmed_on_own_website": r["web_status"] == "confirmed_own_site", "website_check": r["web_status"],
             "key_quote": (r["citations"][0]["text"] if r["citations"] else None),
             "quote_field": (r["citations"][0]["field"] if r["citations"] else None),
-            "phone": r["phone"], "operator": r.get("operator_type"), "cautions": r["cautions"][:2], "score": r["score"]}
+            "phone": r["phone"], "operator": r.get("operator_type"), "cautions": r["cautions"][:2], "score": r["score"],
+            "ai_reader_verdict": (r.get("ai_reader") or {}).get("verdict")}
         return {
             "status": "abstained" if res.abstained else "ok",
             "service": svc.label, "location": loc.label, "district": loc.district, "state": loc.state,
@@ -249,6 +250,7 @@ class Tools:
             "attribution_conflict": bool(get("attribution_conflict")), "analyst_hold": get("analyst_hold"),
             "record_flags": [fl["message"] for fl in r["trust_flags"]], "needs_review": bool(r.get("needs_review")),
             "trust_score": float(r["trust_score"]), "phone": r.get("phone"), "address": r.get("address_text"),
+            "ai_reader": (getattr(self.rt, "ai_checks", None) or {}).get((facility_id, svc.id)),
             "beds": None if r.get("capacity") != r.get("capacity") else r.get("capacity"),
         }
 

@@ -21,7 +21,14 @@ dbutils.widgets.text("location_choice", "", "If ambiguous: option number (0,1,2â
 
 TABLES = ["gold_facilities", "gold_facility_service_evidence", "gold_pincode_lookup", "gold_district_lookup",
           "gold_place_index", "gold_district_nfhs_map", "silver_nfhs_long", "gold_evidence_calibration"]
-rt = pipeline.Runtime.from_tables({t: read_pdf(t) for t in TABLES})
+OPTIONAL_TABLES = ["gold_ai_claim_checks"]
+_t = {t: read_pdf(t) for t in TABLES}
+for _o in OPTIONAL_TABLES:
+    try:
+        _t[_o] = read_pdf(_o)
+    except Exception:
+        pass
+rt = pipeline.Runtime.from_tables(_t)
 print(f"{len(rt.facilities):,} facilities loaded")
 
 # COMMAND ----------

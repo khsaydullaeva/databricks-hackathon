@@ -543,6 +543,7 @@ class Runtime:
     district_nfhs_map: pd.DataFrame | None = None
     evidence: dict | None = None  # service_id -> evidence frame indexed by facility_id
     calibration: dict | None = None  # level -> (% confirmed on own website, n checked)
+    ai_checks: dict | None = None  # (facility_id, service_id) -> AI reader verdict (ai_query, notebook 03b)
 
     @classmethod
     def from_tables(cls, t: dict[str, pd.DataFrame]) -> "Runtime":
@@ -592,6 +593,15 @@ class Runtime:
                 ev["analyst_hold"] = ev["analyst_hold"].map(lambda v: v if isinstance(v, dict) else (json.loads(v) if isinstance(v, str) and v.startswith("{") else None))
             evidence = {sid: g.drop(columns=["service_id"]).set_index("facility_id") for sid, g in ev.groupby("service_id")}
         rt = cls(fac, pin, dl, pi, nl, t.get("gold_district_nfhs_map"), evidence)
+        ai = t.get("gold_ai_claim_checks")
+        rt.ai_checks = {}
+        if ai is not None and len(ai):
+            for r in ai.to_dict("records"):
+                ver = r.get("quote_verified")
+                ver = ver if isinstance(ver, (bool, np.bool_)) else str(ver).lower() == "true"
+                rt.ai_checks[(r["facility_id"], r["service_id"])] = {
+                    "verdict": r.get("ai_verdict") if ver else "unverified", "quote": r.get("ai_quote") if ver else None,
+                    "reason": r.get("ai_reason"), "model": r.get("model")}
         cal = t.get("gold_evidence_calibration")
         rt.calibration = ({r["level"]: (float(r["pct_confirmed_on_own_website"]), int(r["claims_checked"]))
                            for r in cal.to_dict("records")} if cal is not None and len(cal) else {})

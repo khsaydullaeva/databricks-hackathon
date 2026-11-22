@@ -174,6 +174,7 @@ def recommend(rt, service: Service, loc: Location, radius_km: float = 50, top_k:
         res.recommendations[i]["vs_next"] = _compare(recs[i], recs[i + 1])
     res.held = [explain(x, None, service, loc, half_life) for x in held[:8]]
     res.leads = [explain(x, None, service, loc, half_life) for x in leads[:5]]
+    _attach_ai_reader(rt, service, res.recommendations + res.held + res.leads)
 
     # decision funnel (CareProof): how many facilities survive each step, and why the rest dropped
     in_r = int(np.nansum(dist <= radius))
@@ -352,3 +353,18 @@ def evidence_for_facility(rt, facility_id: str, service: Service) -> dict:
     """Convenience for notebooks: full evidence dict for one facility."""
     row = rt.facilities[rt.facilities["facility_id"] == facility_id].iloc[0].to_dict()
     return facility_evidence(row, service)
+
+
+AI_DOUBT = {"other_facility": "seems to describe a different facility or branch", "not_offered": "says it is not offered",
+            "planned": "describes it as planned / not yet available"}
+
+
+def _attach_ai_reader(rt, service: Service, cards: list[dict]) -> None:
+    """Add the LLM second-reader verdict (notebook 03b). Shown as a badge and, when it doubts the claim, a caution.
+    Not a hard filter: on real data its verdict adds only a modest signal over the rules (see METHODOLOGY)."""
+    checks = getattr(rt, "ai_checks", None) or {}
+    for c in cards:
+        a = checks.get((c["facility_id"], service.id))
+        c["ai_reader"] = a
+        if a and a.get("verdict") in AI_DOUBT:
+            c["cautions"].append(f"AI reader: the quote {AI_DOUBT[a['verdict']]}" + (f" – {a['reason']}" if a.get("reason") else "") + ".")

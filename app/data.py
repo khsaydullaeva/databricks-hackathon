@@ -7,8 +7,9 @@ import os
 import pandas as pd
 
 TABLES = ["gold_facilities", "gold_facility_service_evidence", "gold_pincode_lookup", "gold_district_lookup",
-          "gold_place_index", "gold_district_nfhs_map", "silver_nfhs_long", "gold_evidence_calibration"]
-OPTIONAL = {"gold_district_nfhs_map", "silver_nfhs_long", "gold_evidence_calibration"}
+          "gold_place_index", "gold_district_nfhs_map", "silver_nfhs_long", "gold_evidence_calibration",
+          "gold_ai_claim_checks"]
+OPTIONAL = {"gold_district_nfhs_map", "silver_nfhs_long", "gold_evidence_calibration", "gold_ai_claim_checks"}
 
 
 def load_tables() -> dict[str, pd.DataFrame]:

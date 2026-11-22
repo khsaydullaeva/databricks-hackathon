@@ -16,6 +16,7 @@
 
 TABLES = ["gold_facilities", "gold_facility_service_evidence", "gold_pincode_lookup", "gold_district_lookup",
           "gold_place_index", "gold_district_nfhs_map", "silver_nfhs_long", "gold_evidence_calibration"]
+OPTIONAL_TABLES = ["gold_ai_claim_checks"]
 tables = {t: read_pdf(t) for t in TABLES}
 rt = pipeline.Runtime.from_tables(tables)
 ev_all = pd.concat([e.assign(service_id=s) for s, e in rt.evidence.items()]).reset_index()

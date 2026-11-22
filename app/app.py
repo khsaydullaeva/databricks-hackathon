@@ -318,6 +318,11 @@ def render_card(r: dict):
         badge = WEB_BADGE.get(r["web_status"])
         if badge:
             st.markdown(badge + (f" · [open page]({r['web_url']})" if r.get("web_url") else ""))
+        ai = r.get("ai_reader")
+        if ai and ai.get("verdict") not in (None, "unverified"):
+            label = {"offered": ":green-background[🤖 AI reader: offered]", "unclear": ":gray-background[🤖 AI reader: unclear]"}.get(
+                ai["verdict"], f":orange-background[🤖 AI reader: {ai['verdict'].replace('_', ' ')}]")
+            st.markdown(label + (f" — “{ai['quote']}”" if ai.get("quote") else "") + (f" · *{ai['reason']}*" if ai.get("reason") else ""))
         if r["needs_review"]:
             st.markdown(":orange[**⚑ Record needs review**] — it has contradictions or may merge several sites (details below).")
         a, b, c = st.columns(3)

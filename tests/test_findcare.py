@@ -491,3 +491,19 @@ def test_grounding_check_flags_overclaimed_certainty(rt):
     outs = [Tools(rt).search_facilities("dialysis", "Jaipur")]
     g = check_grounding("Jaipur Kidney Care Hospital is the best option. We are 65% sure about it.", outs, set(rt.facilities["name"].map(norm)))
     assert not g["ok"] and "overclaims" in g["issues"][0]
+
+
+def test_ai_reader_attached_as_badge_and_caution(gold):
+    stored = {k: pipeline.to_storable(v) for k, v in gold.items()}
+    stored["gold_ai_claim_checks"] = pd.DataFrame([
+        {"facility_id": "F1", "service_id": "dialysis", "ai_verdict": "offered", "ai_quote": "Performs hemodialysis", "ai_reason": "explicit", "quote_verified": True, "model": "m"},
+        {"facility_id": "F4", "service_id": "dialysis", "ai_verdict": "other_facility", "ai_quote": "Dialysis unit with 10 beds", "ai_reason": "branch", "quote_verified": True, "model": "m"},
+        {"facility_id": "F2", "service_id": "dialysis", "ai_verdict": "offered", "ai_quote": "made up", "ai_reason": "", "quote_verified": False, "model": "m"},
+    ])
+    rt_ = pipeline.Runtime.from_tables(stored)
+    loc = resolve_location("Jaipur", rt_.pin_lookup, rt_.district_lookup, rt_.place_index)
+    res = recommend(rt_, SERVICES_BY_ID["dialysis"], loc, guarded=False)
+    by = {r["facility_id"]: r for r in res.recommendations + res.leads}
+    assert by["F1"]["ai_reader"]["verdict"] == "offered"
+    assert any(c.startswith("AI reader:") for c in by["F4"]["cautions"])
+    assert rt_.ai_checks[("F2", "dialysis")]["verdict"] == "unverified"  # invented quote is not used
