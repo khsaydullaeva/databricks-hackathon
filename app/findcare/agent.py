@@ -54,6 +54,9 @@ Rules you must follow:
 Available services: {", ".join(f"{s.id} ({s.label})" for s in SERVICES)}."""
 
 _SERVICE_ENUM = [s.id for s in SERVICES]
+REASON_PARAM = {"type": "string", "description": (
+    "Your plan, shown live to the user: one sentence (max 20 words) saying what you are checking and why. "
+    "Example: 'A 30-week newborn with breathing trouble needs a NICU, so I am searching NICUs near Darbhanga.'")}
 TOOLS = [
     {"type": "function", "function": {
         "name": "resolve_location",
@@ -267,7 +270,10 @@ class Tools:
         svc, loc, res = self._search(service, location, radius_km)
         if isinstance(res, dict):
             return res
-        return {"status": "ok", "weights": res.weights, "decision_funnel": [{"step": a, "facilities": b} for a, b, _ in res.funnel],
+        return {"status": "ok", "location": loc.label,
+                "ranked": [{"rank": r["rank"], "name": r["name"], "distance_km": r["distance_km"], "evidence_level": r["evidence_level"],
+                            "score": r["score"], "components": r["components"]} for r in res.recommendations],
+                "weights": res.weights, "decision_funnel": [{"step": a, "facilities": b} for a, b, _ in res.funnel],
                 "equal_weight_check": res.sensitivity,
                 "why_each_ranks_above_next": [r["vs_next"] for r in res.recommendations if r.get("vs_next")],
                 "safety_checks": list(GUARD_LABEL.values()),
@@ -278,6 +284,7 @@ class Tools:
         fn = getattr(self, name, None)
         if fn is None or name.startswith("_") or name == "call":
             return {"status": "error", "error": f"Unknown tool {name}"}
+        args = {k: v for k, v in args.items() if k != "reason"}
         try:
             return fn(**args)
         except TypeError as e:
@@ -362,8 +369,13 @@ class AgentResult:
     seconds: float = 0.0
 
 
-def run_agent(rt, history: list[dict], llm=None, guarded: bool = True, max_steps: int = MAX_STEPS) -> AgentResult:
-    """history: [{"role": "user"|"assistant", "content": str}, ...] ending with the user's message."""
+def run_agent(rt, history: list[dict], llm=None, guarded: bool = True, max_steps: int = MAX_STEPS, on_event=None,
+              prior_outputs: list[dict] | None = None) -> AgentResult:
+    """history: [{"role": "user"|"assistant", "content": str}, ...] ending with the user's message.
+    on_event(step_dict) is called live for every step (tool start/end, checks, retries) so a UI can stream them.
+    prior_outputs: tool results from earlier turns of the same conversation (follow-ups may refer to them)."""
+    prior = list(prior_outputs or [])
+    emit = on_event or (lambda e: None)
     t0 = time.time()
     llm = llm or LLM()
     tools = Tools(rt, guarded=guarded)
@@ -373,6 +385,8 @@ def run_agent(rt, history: list[dict], llm=None, guarded: bool = True, max_steps
     with _span("care_finder_agent", "AGENT", {"request": history[-1]["content"] if history else ""}) as root:
         retried = False
         for _ in range(max_steps):
+            emit({"type": "thinking"})
+            t_llm = time.time()
             with _span("llm", "CHAT_MODEL", {"n_messages": len(messages)}) as sp:
                 msg = llm.chat(messages, TOOLS)
                 if sp is not None:
@@ -387,27 +401,41 @@ def run_agent(rt, history: list[dict], llm=None, guarded: bool = True, max_steps
                         args = json.loads(c["function"].get("arguments") or "{}")
                     except json.JSONDecodeError:
                         args = {}
+                    reason = str(args.get("reason") or "").strip()
+                    shown = {k: v for k, v in args.items() if k != "reason"}
+                    emit({"type": "tool_start", "tool": name, "args": shown, "reason": reason, "llm_seconds": round(time.time() - t_llm, 1)})
+                    t_tool = time.time()
                     with _span(f"tool:{name}", "TOOL", args) as sp:
                         out = tools.call(name, args)
                         if sp is not None:
                             sp.set_outputs(out)
-                    res.steps.append({"type": "tool", "tool": name, "args": args, "output": out})
+                    step = {"type": "tool", "tool": name, "args": shown, "reason": reason, "output": out,
+                            "seconds": round(time.time() - t_tool, 2), "llm_seconds": round(t_tool - t_llm, 1)}
+                    res.steps.append(step)
+                    emit(step)
                     res.tool_outputs.append(out)
                     messages.append({"role": "tool", "tool_call_id": c.get("id", name), "content": json.dumps(out, ensure_ascii=False, default=str)[:12000]})
                 continue
             answer = (msg.get("content") or "").strip()
-            g = check_grounding(answer, res.tool_outputs, all_names)
-            res.steps.append({"type": "answer", "grounding": g})
-            if g["ok"] or not res.tool_outputs:
+            emit({"type": "checking"})
+            g = check_grounding(answer, prior + res.tool_outputs, all_names)
+            res.steps.append({"type": "answer", "grounding": g, "attempt": 2 if retried else 1,
+                              "llm_seconds": round(time.time() - t_llm, 1)})
+            emit(res.steps[-1])
+            if g["ok"] or not (prior or res.tool_outputs):
                 res.answer, res.grounding = answer, g
                 break
             if not retried:
                 retried = True
+                res.steps.append({"type": "retry", "issues": g["issues"]})
+                emit(res.steps[-1])
                 messages.append({"role": "assistant", "content": answer})
                 messages.append({"role": "user", "content": "SYSTEM CHECK: your answer contains statements not found in the tool results: "
                                  + "; ".join(g["issues"]) + ". Rewrite the answer using only facts and exact quotes from the tool results."})
                 continue
-            res.answer, res.grounding, res.used_fallback = fallback_answer(res.tool_outputs), g, True
+            res.answer, res.grounding, res.used_fallback = fallback_answer(res.tool_outputs or prior), g, True
+            res.steps.append({"type": "fallback"})
+            emit(res.steps[-1])
             break
         else:
             res.answer, res.used_fallback = fallback_answer(res.tool_outputs), True
@@ -420,3 +448,9 @@ def run_agent(rt, history: list[dict], llm=None, guarded: bool = True, max_steps
                 pass
     res.seconds = round(time.time() - t0, 1)
     return res
+
+
+for _t in TOOLS:  # every tool call carries the model's stated plan (models don't emit text alongside tool calls)
+    _p = _t["function"]["parameters"]
+    _p["properties"] = {"reason": REASON_PARAM, **_p["properties"]}
+    _p["required"] = ["reason"] + [r for r in _p["required"] if r != "reason"]

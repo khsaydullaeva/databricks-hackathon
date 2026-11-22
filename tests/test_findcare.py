@@ -519,3 +519,31 @@ def test_grounding_quote_pairing_ellipsis_and_name_variants(rt):
     g = check_grounding('Jaipur Kidney Care Hospital has "Strong" evidence: "Performs ... hemodialysis" and "Performs hemodialysis".', outs, names)
     assert g["ok"], g
     assert Tools(rt).search_facilities("dialysis", "")["status"] == "missing_location"
+
+
+def test_agent_streams_events_with_stated_plan(rt):
+    from findcare.agent import TOOLS, run_agent
+
+    assert all(t["function"]["parameters"]["required"][0] == "reason" for t in TOOLS)
+    events = []
+
+    def answer(messages):
+        top = json.loads(messages[-1]["content"])["recommendations"][0]
+        return {"content": f"{top['name']} ({top['distance_km']} km): \"{top['key_quote']}\". Please phone the facility to confirm before travelling."}
+
+    call = _call("search_facilities", service="dialysis", location="Jaipur", reason="Kidney failure needs dialysis, so I search Jaipur.")
+    res = run_agent(rt, [{"role": "user", "content": "dialysis Jaipur"}], llm=ScriptedLLM([call, answer]), on_event=events.append)
+    kinds = [e["type"] for e in events]
+    assert kinds[:3] == ["thinking", "tool_start", "tool"] and "checking" in kinds and kinds[-1] == "answer"
+    tool_step = res.steps[0]
+    assert tool_step["reason"].startswith("Kidney failure") and "reason" not in tool_step["args"]
+
+
+def test_follow_up_grounded_in_earlier_turns(rt):
+    from findcare.agent import Tools, run_agent
+
+    first = Tools(rt).search_facilities("dialysis", "Jaipur")
+    name = first["recommendations"][0]["name"]
+    llm = ScriptedLLM([{"content": f"{name} is first because it has stronger evidence. Please phone the facility to confirm before travelling."}])
+    res = run_agent(rt, [{"role": "user", "content": "why is it first?"}], llm=llm, prior_outputs=[first])
+    assert res.grounding["ok"] and not res.used_fallback

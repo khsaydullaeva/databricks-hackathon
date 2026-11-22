@@ -86,49 +86,85 @@ def _tracing():
     return setup_tracing()
 
 
-def _tool_summary(step: dict) -> str:
-    out, a = step["output"], step["args"]
-    args = ", ".join(f"{k}={v!r}" for k, v in a.items())
-    head = f"🔧 **{step['tool']}**({args}) → `{out.get('status', '')}`"
+TOOL_ICON = {"resolve_location": "📍", "search_facilities": "🔎", "get_facility_evidence": "📄",
+             "district_health_context": "📊", "explain_ranking": "⚖️"}
+
+
+def _result_line(out: dict) -> str:
+    st_ = out.get("status", "")
     if out.get("recommendations") is not None:
-        names = [f"{r['rank']}. {r['name']} ({r['distance_km']} km, {r['evidence_level']})" for r in out["recommendations"][:5]]
-        head += "  \n" + ("; ".join(names) if names else "no recommendation")
-        if out.get("held_for_review"):
-            head += f"  \nHeld for review: {', '.join(h['name'] for h in out['held_for_review'][:4])}"
-    elif out.get("options"):
-        head += f"  \nOptions: {', '.join(out['options'][:6])}"
-    return head
+        n, h = len(out["recommendations"]), len(out.get("held_for_review") or [])
+        top = ", ".join(r["name"] for r in out["recommendations"][:3])
+        return (f"{n} ranked" + (f", {h} held for review" if h else "") + (f" — {top}" if top else "")
+                + (" · abstained (nothing passed the safety checks)" if st_ == "abstained" else ""))
+    if out.get("options"):
+        return "ambiguous place — options: " + ", ".join(out["options"][:5])
+    if st_ == "missing_location":
+        return "no location given yet"
+    if "quotes" in out:
+        return f"{out.get('evidence_level')} evidence · {len(out['quotes'])} quotes · website check: {out.get('website_check')}"
+    if "decision_funnel" in out:
+        return "decision funnel: " + " → ".join(str(f["facilities"]) for f in out["decision_funnel"])
+    if "rows" in out:
+        return f"{len(out['rows'])} district health indicators ({out.get('district', '')})"
+    if out.get("label"):
+        return out["label"]
+    return out.get("error") or st_
+
+
+def _write_step(step: dict):
+    """One line of the agent's working log (used live and when replaying history)."""
+    t = step["type"]
+    if t == "tool":
+        args = ", ".join(f"{k}={v!r}" for k, v in step["args"].items())
+        if step.get("reason"):
+            st.markdown(f"🧠 *{step['reason']}*")
+        st.markdown(f"{TOOL_ICON.get(step['tool'], '🔧')} `{step['tool']}({args})`")
+        st.caption(f"↳ {_result_line(step['output'])} · model {step.get('llm_seconds', 0)} s · tool {step.get('seconds', 0)} s")
+    elif t == "answer":
+        g = step["grounding"]
+        if g["ok"]:
+            st.markdown(f"✅ **Grounding check passed** — {g['facilities_checked']} facilities and {g['quotes_checked']} quotes "
+                        f"matched the tool results · answer written in {step.get('llm_seconds', 0)} s")
+        else:
+            st.markdown("❌ **Grounding check failed** — " + "; ".join(g["issues"][:3]))
+    elif t == "retry":
+        st.markdown("🔁 Asking the model to rewrite its answer using only the tool results")
+    elif t == "fallback":
+        st.markdown("🛟 Showing the checked summary of the tool results instead of the model's text")
+
+
+def _summary_label(meta: dict) -> str:
+    if meta.get("error"):
+        return "⚠ Assistant error"
+    n = len([x for x in meta["steps"] if x["type"] == "tool"])
+    tail = "🛟 fallback to checked summary" if meta.get("fallback") else ("✔ verified against tool results" if (meta.get("grounding") or {}).get("ok") else "")
+    return f"Worked for {meta.get('seconds', 0)} s · {n} tool call{'s' if n != 1 else ''} · {tail}"
 
 
 def _render_meta(meta: dict):
-    g = meta.get("grounding") or {}
     if meta.get("error"):
         st.caption(f":red[{meta['error']}]")
         return
-    if meta.get("fallback"):
-        st.caption(":orange[⚠ The model's answer failed the grounding check, so this is the checked summary of the tool results instead.]")
-    elif g.get("ok"):
-        st.caption(f":green[✔ Verified against tool results] – {g.get('facilities_checked', 0)} facilities and "
-                   f"{g.get('quotes_checked', 0)} quotes checked · {meta.get('seconds', 0)} s")
-    with st.expander(f"How the assistant decided ({len([s for s in meta['steps'] if s['type'] == 'tool'])} tool calls)"):
+    with st.status(_summary_label(meta), state="complete", expanded=False):
         for stp in meta["steps"]:
-            if stp["type"] == "tool":
-                st.markdown(_tool_summary(stp))
-                with st.popover("Raw tool output"):
-                    st.json(stp["output"], expanded=False)
-            else:
-                gg = stp["grounding"]
-                st.markdown(("✅ Grounding check passed" if gg["ok"] else "❌ Grounding check failed: " + "; ".join(gg["issues"])))
+            _write_step(stp)
         if meta.get("trace_id"):
-            st.caption(f"MLflow trace: `{meta['trace_id']}` (experiment `findcare-agent`)")
+            st.caption(f"MLflow trace `{meta['trace_id']}` · experiment `findcare-agent`")
+        tool_steps = [x for x in meta["steps"] if x["type"] == "tool"]
+        if tool_steps:
+            with st.popover("Raw tool outputs"):
+                for x in tool_steps:
+                    st.markdown(f"**{x['tool']}**")
+                    st.json(x["output"], expanded=False)
 
 
 if top_mode == "💬 Ask the assistant":
     from findcare.agent import run_agent
 
-    st.caption("Describe the patient's need in your own words. The assistant uses the **same checked data, safety checks and "
-               "ranking** as Search, can only state facts returned by those tools, and every answer is verified against the "
-               "tool results before you see it.")
+    st.caption("Describe the patient's need in your own words. You'll see the assistant work live – its plan, every tool it "
+               "calls and what came back. It uses the **same checked data, safety checks and ranking** as Search, can only "
+               "state facts returned by those tools, and every answer is verified before you see it.")
     _tracing()
     chat = st.session_state.setdefault("chat", [])
     if not chat:
@@ -144,23 +180,40 @@ if top_mode == "💬 Ask the assistant":
                 st.rerun()
     for m in chat:
         with st.chat_message(m["role"]):
-            st.markdown(m["content"])
             if m.get("meta"):
                 _render_meta(m["meta"])
+            st.markdown(m["content"])
     prompt = st.chat_input("Describe what the patient needs and where they are…") or st.session_state.pop("pending_prompt", None)
     if prompt:
         chat.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
         with st.chat_message("assistant"):
-            with st.spinner("Checking facilities, evidence and safety checks…"):
-                try:
-                    r = run_agent(rt, [{"role": m["role"], "content": m["content"]} for m in chat], guarded=safety)
-                    meta = {"steps": r.steps, "grounding": r.grounding, "fallback": r.used_fallback,
-                            "trace_id": r.trace_id, "seconds": r.seconds}
-                    answer = r.answer
-                except Exception as e:  # model endpoint unavailable etc.
-                    answer, meta = "The assistant is unavailable right now – please use **Search** instead.", {"steps": [], "error": str(e)[:300]}
+            status = st.status("🧠 Thinking…", expanded=True)
+
+            def on_event(e):
+                t = e["type"]
+                if t == "thinking":
+                    status.update(label="🧠 Thinking…")
+                elif t == "tool_start":
+                    status.update(label=f"{TOOL_ICON.get(e['tool'], '🔧')} Running {e['tool']}…")
+                elif t == "checking":
+                    status.update(label="🔍 Checking the answer against the tool results…")
+                else:
+                    with status:
+                        _write_step(e)
+
+            try:
+                prior = [x["output"] for m in chat if m.get("meta") for x in m["meta"].get("steps", []) if x["type"] == "tool"]
+                r = run_agent(rt, [{"role": m["role"], "content": m["content"]} for m in chat], guarded=safety,
+                              on_event=on_event, prior_outputs=prior)
+                meta = {"steps": r.steps, "grounding": r.grounding, "fallback": r.used_fallback, "trace_id": r.trace_id, "seconds": r.seconds}
+                answer = r.answer
+                status.update(label=_summary_label(meta), state="complete", expanded=False)
+            except Exception as e:  # model endpoint unavailable etc.
+                answer, meta = "The assistant is unavailable right now – please use **Search** instead.", {"steps": [], "error": str(e)[:300]}
+                status.update(label="⚠ Assistant error", state="error", expanded=False)
+            st.markdown(answer)
         chat.append({"role": "assistant", "content": answer, "meta": meta})
         st.rerun()
     if chat and st.button("Start a new conversation"):
