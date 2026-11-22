@@ -4,100 +4,85 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Find the Right Care · India</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧭</text></svg>" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='40' fill='%234c8dff'/></svg>" />
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.css" />
-  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/styles.css?v=4" />
 </head>
 <body>
   <div id="map"></div>
 
   <header class="topbar">
-    <div class="brand">
-      <div class="logo">🧭</div>
-      <div><h1>Find the Right Care</h1><small>Evidence-checked healthcare routing · India</small></div>
-    </div>
-    <div class="stats" id="stats"></div>
-    <button class="btn-assist" id="toggleAssist">✨ Ask the assistant</button>
+    <div class="brand"><h1>Find the Right Care<small>India</small></h1></div>
+    <button class="btn-assist" id="toggleAssist">Ask the assistant</button>
   </header>
-
-  <div class="hero" id="hero">
-    <h2>10,000 facilities.<br /><em>Every answer cited.</em></h2>
-    <p>Pick the care needed and where the patient is – we show who offers it, how sure we are, and why.</p>
-  </div>
 
   <!-- ===================== SEARCH PANEL ===================== -->
   <aside class="panel" id="left">
-    <div class="panel-head">
-      <h2>🔎 Find care</h2>
-      <p>Two inputs. Every suggestion quotes the record it is based on.</p>
-    </div>
+    <div class="panel-head"><h2>Find care</h2></div>
     <div class="scroll" id="leftScroll">
-      <div class="step-label">1 · Care needed</div>
+      <div class="step-label">Service</div>
       <div class="services" id="services"></div>
 
-      <div class="step-label" style="margin-top:16px">2 · Where is the patient?</div>
+      <div class="step-label" style="margin-top:16px">Patient location</div>
       <div class="tabs" id="locTabs">
-        <button class="tab sel" data-mode="city">🏙️ City</button>
-        <button class="tab" data-mode="district">🗺️ District</button>
-        <button class="tab" data-mode="pin">📮 PIN</button>
-        <button class="tab" data-mode="point">📍 Map</button>
+        <button class="tab sel" data-mode="city">City</button>
+        <button class="tab" data-mode="district">District</button>
+        <button class="tab" data-mode="pin">PIN</button>
+        <button class="tab" data-mode="point">Map</button>
       </div>
       <div class="loc-body" id="locBody"></div>
 
-      <div class="range-row">Search within <input type="range" id="radius" min="10" max="200" step="5" value="50" /> <b id="radiusVal">50 km</b></div>
+      <div class="range-row">Within <input type="range" id="radius" min="10" max="200" step="5" value="50" /> <b id="radiusVal">50 km</b></div>
 
       <details class="adv" id="adv">
-        <summary>⚙ Advanced settings (for planners)</summary>
-        <div class="toggle"><span>Safety mode – only rank records that pass every check</span><input type="checkbox" id="safety" checked /></div>
-        <div class="toggle"><span>Only services confirmed on the hospital's own website</span><input type="checkbox" id="onlyConfirmed" /></div>
+        <summary>Advanced settings</summary>
+        <div class="toggle"><span>Safety mode (rank only records that pass every check)</span><input type="checkbox" id="safety" checked /></div>
+        <div class="toggle"><span>Only website-confirmed services</span><input type="checkbox" id="onlyConfirmed" /></div>
         <div class="toggle"><span>Hide records that need review</span><input type="checkbox" id="hideReview" /></div>
         <div id="weights"></div>
         <div class="custom-note" id="customNote" hidden></div>
       </details>
 
       <button class="cta" id="go" disabled>Find care</button>
-      <div class="results" id="results"></div>
+      <div class="results" id="results" hidden></div>
     </div>
   </aside>
 
   <!-- ===================== ASSISTANT PANEL ===================== -->
   <aside class="panel closed" id="right">
-    <div class="panel-head">
-      <h2>✨ Assistant <span class="chip" style="margin-left:auto">Llama 3.3 70B · Databricks</span></h2>
-      <p>Describe the need in your own words. Watch it work – its plan, every tool call, and a grounding check before you see the answer.</p>
-    </div>
+    <div class="panel-head"><h2>Assistant</h2></div>
     <div class="scroll"><div class="chat-log" id="chatLog"></div></div>
     <div class="composer">
-      <textarea id="chatInput" rows="1" placeholder="e.g. Newborn at 30 weeks struggling to breathe, we are in Darbhanga"></textarea>
-      <button class="send" id="send" title="Send">➤</button>
+      <textarea id="chatInput" rows="1" placeholder="Describe the patient's need and location"></textarea>
+      <button class="send" id="send" title="Send">↑</button>
     </div>
   </aside>
 
   <!-- ===================== MAP CONTROLS ===================== -->
   <div class="mapctl" id="mapctl">
     <button id="btn3d" class="on" title="Tilt 3D / flat 2D">3D</button>
-    <button id="btnHex" class="on" title="3D coverage of reliable facilities across India">Hex</button>
-    <button id="btnArcs" class="on" title="Arcs from patient to options">Arcs</button>
-    <button id="btnTerrain" title="3D terrain relief">Relief</button>
-    <button id="btnSpin" title="Orbit camera">Orbit</button>
+    <button id="btnHex" class="on" title="Coverage of reliable facilities across India">Coverage</button>
+    <button id="btnArcs" class="on" title="Lines from patient to options">Lines</button>
+    <button id="btnTerrain" title="Terrain relief">Terrain</button>
+    <button id="btnSpin" title="Rotate camera">Rotate</button>
   </div>
-  <div class="legend" id="legend">
+  <div class="legend" id="legend" hidden>
     <span><i style="background:var(--patient)"></i>Patient</span>
-    <span><i style="background:var(--strong)"></i>Strong</span>
+    <span><i style="background:var(--strong)"></i>Strong evidence</span>
     <span><i style="background:var(--moderate)"></i>Moderate</span>
     <span><i style="background:var(--limited)"></i>Limited</span>
     <span><i style="background:var(--held)"></i>Held for review</span>
-    <span><i style="background:var(--indirect)"></i>Unverified lead</span>
-    <span>Column height = score · hexagons = reliable facilities nationwide</span>
+    <span><i style="background:var(--indirect)"></i>Unverified</span>
   </div>
 
-  <!-- ===================== DETAIL DRAWER ===================== -->
-  <section class="drawer" id="drawer"><button class="x" id="drawerClose">✕</button><div id="drawerBody"></div></section>
+  <!-- ===================== PLACE SHEET ===================== -->
+  <section class="drawer" id="drawer"><button class="x" id="drawerClose" aria-label="Close">✕</button><div id="drawerBody"></div></section>
 
   <script src="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.js"></script>
   <script src="https://unpkg.com/deck.gl@9.4.1/dist.min.js"></script>
   <script src="https://unpkg.com/marked@12.0.2/marked.min.js"></script>
   <script src="https://unpkg.com/dompurify@3.4.18/dist/purify.min.js"></script>
-  <script src="/static/app.js"></script>
+  <script src="/static/icons.js?v=4"></script>
+  <script src="/static/app.js?v=4"></script>
 </body>
 </html>
