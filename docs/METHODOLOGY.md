@@ -59,6 +59,52 @@ We search six parts of each record. Fields that list concrete things count for m
 
 **Every recommendation quotes the field text it is based on**: the list item, or the sentence from the description.
 
+## 2b. Fact-check against the hospital's own website
+
+The record's fields all come from the same directory and listing pages, so agreement between them is weak corroboration. To get an **independent** source, we fetch each facility's *official* website and look for the service there. The checker (`webcheck.py`, run by `scripts/verify_websites.py` or notebook `02b`) does the following:
+
+- Fetches the homepage plus up to 4 internal pages whose link text or URL suggests services (Services, Departments, Facilities, …).
+- Respects robots.txt and uses 10 s timeouts.
+- Skips directory sites (Practo, Justdial, business.site, …), because they aren't the hospital speaking.
+- Searches the pages with the same strong-term rules and negation handling as the record. Two extra rules apply to web text, because websites contain generic marketing language:
+  - Generic words don't count: "Medicine *Delivery*" isn't childbirth, and "blood *transfusions*" in a disease explainer isn't a blood bank.
+  - Blog, story, news, careers and vacancy text is ignored.
+
+| Website outcome | Effect |
+|---|---|
+| Hospital's **own** site names the service | new evidence field "Hospital's own website" (weight 1.0) with quote and link. Together with the record, this reaches **Strong**. |
+| A **group** site (domain shared by 3+ facilities) names it | weight 0.4 only, because the page may describe another branch |
+| Site reachable, service **not** named | caution only. Hospital websites are often incomplete, so absence isn't proof. |
+| Unreachable, no website, or directory only | no effect |
+
+If a facility's own site names a service its record didn't claim, it gains a new evidence row. Users can switch on "Only show services confirmed on the hospital's own website".
+
+**Results on the real data.** We crawled 7,651 official domains:
+- 5,843 facilities' sites were reachable, 2,200 were not, 1,610 facilities have no website, and 344 list only directory sites.
+- Own websites confirmed 20,164 claims, across about 3,900 facilities.
+- Spot-checks of website confirmations were about 90% genuine: department menus, named units, "Cath Lab", "NICU".
+
+**Independent validation of the evidence levels.** We took the levels computed from the record alone, which use no website information, and checked them against the hospitals' own sites (44,445 claims where the site was reachable). The share confirmed falls steadily as the level falls:
+
+| Record-only level | Confirmed on own website | Claims checked |
+|---|---|---|
+| Strong | 65% | 13,154 |
+| Moderate | 47% | 5,595 |
+| Limited | 36% | 3,557 |
+| Indirect | 17% | 22,139 |
+
+These rates are lower bounds on precision, because a site that doesn't mention a service isn't proof the hospital lacks it. They are stored in `gold_evidence_calibration` and shown on every result card.
+
+## 2c. Records set aside for later labelling
+
+`gold_review_queue` separates records that are incomplete or untrustworthy, so a person can label them later. Each record gets a priority:
+
+- **+2** for each contradiction flag: coordinates vs postcode, state vs postcode, possible merged sites, implausible service breadth, or no location.
+- **+1** if no size data at all is recorded.
+- **+1** if its own website is reachable but mentions none of the services the record claims.
+
+Records with priority ≥ 2 are marked `needs_review`. The app still shows them, because in rural areas they may be the only option, but it marks them "⚑ Record needs review" and offers a "Hide records that need review" switch.
+
 ## 3. Trust: is the record internally consistent?
 
 `trust = clamp(1 − Σ penalties, 0.1, 1) × (0.85 + 0.15 × completeness)`
@@ -70,13 +116,13 @@ Completeness is the share of these that the record has: doctors, beds, year esta
 | No usable coordinates or postcode | 0.35 | "distance cannot be computed" |
 | No coordinates; location taken from the postcode centre | 0.10 | "location approximated from postcode" |
 | Coordinates more than 40 km from the postcode centre | 0.20 | "one of them is wrong", plus which one we used |
-| Record's state differs from the postcode's state | 0.15 | "Record says X, postcode belongs to Y" |
+| Record's state differs from the postcode's state (only when the field holds a real state name) | 0.15 | "Record says X, postcode belongs to Y" |
 | At least 4 different facilities share identical coordinates | 0.10 | "likely a city-level geocode" |
 | Text mentions postcodes in other districts | 0.15 | "may merge more than one site" |
-| Claims ≥ 65% of all service types without 50+ beds | 0.10 | "may be a generic or merged listing" |
+| Claims ≥ 65% of all service types without 50+ beds (medical colleges exempt) | 0.10 | "may be a generic or merged listing" |
 | No source URL | 0.10 | "claims cannot be traced" |
 
-**Resolving a conflict between coordinates and postcode.** When the two disagree, the record's own city and state text gets a vote. If the postcode matches more of {city, state} than the coordinates do, we use the postcode centre for distance. Otherwise we keep the coordinates. Either way the flag is shown.
+**Resolving a conflict between coordinates and postcode.** When the two disagree, we use whichever point is closer to the city named in the record. If the city can't be located, the city/state text votes. Either way the flag is shown, along with the reason for the choice.
 
 **Duplicates.** Records with the same normalised name within 2 km are collapsed into one result, and the result says so.
 
@@ -116,14 +162,39 @@ For the patient's district we show the NFHS-5 indicators relevant to the service
 How the data is handled:
 - `*` (suppressed) is shown as "not reported", never as 0.
 - `(29.5)` values are flagged "low sample (25–49 cases)".
-- PIN-directory districts are matched to NFHS districts within the same state: an exact match first, then a fuzzy match (similarity ≥ 0.80, labelled in the UI). If neither works, we say "could not be matched" rather than guess.
+- PIN-directory districts are matched to NFHS districts within the same state: an exact match first, then a table of known renames (Nuh → Mewat, Ballari → Bellary, …), then a fuzzy match (similarity ≥ 0.80, labelled in the UI). If none of these works (usually a district created after the survey), we say "no NFHS-5 data" rather than guess.
+- The Marketplace NFHS table has abbreviated column names, so the indicators shown for each service are curated in `nfhs.SERVICE_INDICATORS`, with plain-English labels.
 - NFHS-5 data is from 2019–21. It describes the population, not any facility.
 
 The planner view in notebook 05 combines need (NFHS) with supply (`gold_district_service_coverage`: the distance from the district centre to the nearest facility with Strong or Moderate evidence) to rank underserved districts.
 
-## 7. Known limitations (and what we would do next)
+## 7. What the real data looked like
 
-- **"Corroboration" is within one record.** The fields were all extracted from the same web pages, so two fields agreeing reduces *extraction* error but not a false claim on the website itself. Next step: weight by the number of distinct source domains.
+On the real Marketplace tables, the evidence extractor found these Strong / Moderate counts:
+
+| Service | Strong | Moderate |
+|---|---|---|
+| Dialysis | 726 | 320 |
+| Emergency C-section | 560 | 112 |
+| NICU | 286 | 452 |
+| Burn care | 86 | 91 |
+| Cardiac surgery | 593 | 265 |
+| MRI | 668 | 278 |
+
+Thousands more records mention only related terms (Indirect). Those are never recommended.
+
+Spot-checks of random Strong and Moderate matches were almost all correct, for example "Provides hemodialysis and CRRT in the dialysis center", "Level 3 NICU" and "Burn care ward". The errors we found led to rule changes:
+- Future plans were being read as current services ("Phase II will include TrueBeam…", "Plans to add a radiation oncology program"), so we added future/plan wording to the negation rules.
+- Corneal transplants were counted as organ transplants; they now count as eye care.
+- AI-extraction leftovers ("Cancer?", "not specified") are now dropped.
+
+The real-data cleaning is listed in the README; the most important issues were geocoding errors in both the facility table and the PIN directory.
+
+**Settling disagreements between coordinates and postcode.** In 1,671 records the two disagree by more than 40 km, with a median gap of 184 km. When the record's own city can be located (as a district or post office in its state), we use whichever of the two points is closer to that city. When it can't, the city/state text votes.
+
+## 8. Known limitations (and what we would do next)
+
+- **Corroboration within one record is weak.** The fields were all extracted from the same pages. The website fact-check (section 2b) adds an independent source, but only for facilities with a reachable official site. A hospital's own site can also over-claim.
 - **Keyword matching** can miss paraphrases ("kidney machine"). An LLM extractor could catch these, but its output would also need citations. We chose transparent rules that a reviewer can audit.
 - **No real-time availability**, cost, or quality-of-care data. The app tells users to call ahead every time.
 - **Straight-line distance**, and district assignment without polygons (see section 4).

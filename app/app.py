@@ -20,6 +20,12 @@ from findcare.services import HALF_LIFE_KM, SERVICES, SERVICES_BY_ID
 st.set_page_config(page_title="Find the Right Care · India", page_icon="🏥", layout="wide")
 
 LEVEL_STYLE = {"Strong": ("green", "✅"), "Moderate": ("orange", "🟠"), "Limited": ("red", "⚠️"), "Indirect": ("gray", "❔")}
+WEB_BADGE = {
+    "confirmed_own_site": ":green-background[**✔ Confirmed on the hospital's own website**]",
+    "mentioned_group_site": ":blue-background[Mentioned on the hospital group's website] (may describe another branch)",
+    "not_found_on_site": ":gray-background[✖ Not found on the hospital's website] (websites are often incomplete)",
+    "site_unreachable": ":gray-background[Hospital website could not be reached]",
+}
 LEVEL_HEX = {"Strong": "#1a7f37", "Moderate": "#d4a72c", "Limited": "#bc4c00", "Indirect": "#8c959f"}
 
 
@@ -48,6 +54,11 @@ with st.sidebar:
     }
     min_ev = st.select_slider("Minimum evidence to recommend", options=[0.31, 0.55, 0.80], value=0.31,
                               format_func=lambda v: {0.31: "Limited or better", 0.55: "Moderate or better", 0.80: "Strong only"}[v])
+    only_confirmed = st.toggle("Only show services confirmed on the hospital's own website", value=False,
+                               help="We checked each hospital's official website for the service. Sites are often incomplete, "
+                                    "so this can hide genuine options.")
+    hide_review = st.toggle("Hide records that need review", value=False,
+                            help="Records with contradictions (e.g. location vs postcode) or possible merged sites.")
     st.divider()
     st.caption(f"Data: Virtue Foundation facility dataset ({len(rt.facilities):,} records), India Post PIN directory, "
                "NFHS-5 (2019–21) district fact sheets. Records were extracted from web pages and may be wrong or out of date.")
@@ -87,7 +98,8 @@ if len(loc.alternatives) > 1:
     loc = resolve_location(search["location"], rt.pin_lookup, rt.district_lookup, rt.place_index, choice=pick)
     loc.warnings = [x for x in loc.warnings if "matches" not in x]
 
-res = recommend(rt, svc, loc, radius_km=search["radius"], top_k=search["top_k"], weights=w, min_evidence=min_ev)
+res = recommend(rt, svc, loc, radius_km=search["radius"], top_k=search["top_k"], weights=w, min_evidence=min_ev,
+                only_confirmed=only_confirmed, hide_review=hide_review)
 
 # ----------------------------------------------------------------------------- summary
 st.subheader(f"{svc.label} near {loc.label}")
@@ -109,6 +121,7 @@ if res.recommendations:
     top = res.recommendations[0]
     color, icon = LEVEL_STYLE[top["evidence_level"]]
     st.success(f"**Best option: {top['name']}** — {top['distance_km']:.0f} km · {icon} {top['evidence_level']} evidence"
+               + (" · ✔ confirmed on its own website" if top["web_status"] == "confirmed_own_site" else "")
                + (f" · 📞 {top['phone']}" if top.get("phone") else ""))
 if svc.advice:
     st.info(f"💡 {svc.advice}")
@@ -133,7 +146,14 @@ def render_card(r: dict):
     with st.container(border=True):
         head = f"{r['rank']}. {r['name']}" if r["rank"] else r["name"]
         st.markdown(f"#### {head}")
-        st.markdown(f":{color}[**{icon} {r['evidence_level']} evidence**] — {r['evidence_meaning']}")
+        cal = (rt.calibration or {}).get(r["evidence_level"])
+        cal_txt = f" · *claims at this level were confirmed on hospitals' own websites {cal[0]:.0f}% of the time*" if cal else ""
+        st.markdown(f":{color}[**{icon} {r['evidence_level']} evidence**] — {r['evidence_meaning']}{cal_txt}")
+        badge = WEB_BADGE.get(r["web_status"])
+        if badge:
+            st.markdown(badge + (f" · [open page]({r['web_url']})" if r.get("web_url") else ""))
+        if r["needs_review"]:
+            st.markdown(":orange[**⚑ Record needs review**] — it has contradictions or may merge several sites (details below).")
         a, b, c = st.columns(3)
         a.markdown(f"**Distance**  \n{r['distance_km']:.1f} km" + ("  \n*(approximate location)*" if r["location_basis"] != "facility coordinates" else ""))
         b.markdown(f"**Phone**  \n{r['phone'] or '— not listed'}")
@@ -143,7 +163,8 @@ def render_card(r: dict):
         st.markdown("**Why this facility?**")
         if r["citations"]:
             for cit in r["citations"]:
-                st.markdown(f"- *{cit['field']}* ({cit['kind']}): “{cit['text']}”")
+                link = f" [source]({cit['url']})" if cit.get("url") else ""
+                st.markdown(f"- *{cit['field']}* ({cit['kind']}): “{cit['text']}”{link}")
         else:
             st.markdown("- No direct quotes.")
         if r["cautions"]:
@@ -191,7 +212,7 @@ with tab_leads:
         render_card(r)
 
 with tab_ctx:
-    ctx = district_context(rt.nfhs_long, rt.district_nfhs_map, loc.state_norm, loc.district_norm, svc.nfhs)
+    ctx = district_context(rt.nfhs_long, rt.district_nfhs_map, loc.state_norm, loc.district_norm, svc.nfhs, service_id=svc.id)
     if ctx.get("ok"):
         st.caption(ctx["note"] + " Values are % unless stated. These describe the district population, not any facility.")
         df = pd.DataFrame(ctx["rows"]).rename(columns={"indicator": "Indicator", "value": "District", "state_avg": "State (avg of districts)", "caution": "Caution"})
@@ -212,14 +233,22 @@ terms. Mentions with "no / not available / planned / referred to" wording are ig
 fields combine as 1 − ∏(1 − c). Strong = named in 2+ separate fields; Moderate = 1 field; Limited = description/specialty
 only; Indirect = related terms only (never recommended, shown as leads).
 
-**3. Check whether the record can be trusted.** We penalise records whose coordinates contradict their postcode,
+**3. Fact-check against the hospital's own website.** We fetched each facility's official website (homepage + up to 4
+service pages) and looked for the service there. A confirmation is an *independent* source, so record + website agreement
+counts as Strong. Not finding it doesn't count against the facility much: hospital websites are often incomplete.
+
+**4. Check whether the record can be trusted.** We penalise records whose coordinates contradict their postcode,
 whose state contradicts their postcode, that share coordinates with many others (city-level geocode), that mention
 postcodes in other districts (possible merged record), that claim an implausibly wide set of services, or that have
 no source URL. Tertiary services claimed by small clinics are down-weighted.
 
-**4. Rank.** Score = {w['evidence']/tot:.2f}×evidence + {w['proximity']/tot:.2f}×closeness + {w['trust']/tot:.2f}×record
+**5. Rank.** Score = {w['evidence']/tot:.2f}×evidence + {w['proximity']/tot:.2f}×closeness + {w['trust']/tot:.2f}×record
 quality + {w['scale']/tot:.2f}×size. Closeness halves every **{hl:.0f} km** for this service ({svc.urgency} care).
 If fewer than 3 options are found we widen the radius and tell you.
+
+**Does the evidence level mean anything?** We checked {sum(n for _, n in (rt.calibration or {}).values()):,} claims against
+the hospitals' own websites. Share confirmed, by level: {" · ".join(f"{k} {v[0]:.0f}%" for k, v in (rt.calibration or {}).items()) or "not available"}.
+(A lower bound: hospital websites are often incomplete.)
 
 **What we trade off:** a closer facility with weaker evidence can rank below a farther one with strong evidence —
 because a wasted trip costs more time than a longer one. Use the sliders on the left to change this.

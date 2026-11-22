@@ -38,7 +38,10 @@ def fq(name: str) -> str:
 
 def write_pdf(pdf: pd.DataFrame, name: str, comment: str | None = None):
     """pandas -> Delta. Lists become JSON strings; NaN becomes NULL."""
-    sdf = spark.createDataFrame(pipeline.to_storable(pdf))
+    if len(pdf) == 0:  # Spark can't infer a schema from an empty frame
+        sdf = spark.createDataFrame([], T.StructType([T.StructField(str(c), T.StringType()) for c in pdf.columns]))
+    else:
+        sdf = spark.createDataFrame(pipeline.to_storable(pdf))
     for c, t in sdf.dtypes:
         if t in ("double", "float"):
             sdf = sdf.withColumn(c, F.when(F.isnan(F.col(c)), None).otherwise(F.col(c)))

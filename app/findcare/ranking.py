@@ -53,7 +53,8 @@ def scale_score(capacity, doctors) -> tuple[float, str]:
 
 
 def recommend(rt, service: Service, loc: Location, radius_km: float = 50, top_k: int = 5,
-              weights: dict | None = None, min_evidence: float = 0.31, evidence_cache: dict | None = None) -> Result:
+              weights: dict | None = None, min_evidence: float = 0.31, evidence_cache: dict | None = None,
+              only_confirmed: bool = False, hide_review: bool = False) -> Result:
     if not loc.ok or loc.lat is None or loc.lon is None:
         raise ValueError(f"Location not resolved: {loc.error}")
     w = dict(DEFAULT_WEIGHTS)
@@ -70,9 +71,14 @@ def recommend(rt, service: Service, loc: Location, radius_km: float = 50, top_k:
     ev = _evidence_table(rt, service, evidence_cache)
     half_life = HALF_LIFE_KM[service.urgency]
 
+    keep = ev["evidence_score"].reindex(fac["facility_id"]).fillna(0).to_numpy() > 0
+    if only_confirmed and "web_status" in ev:
+        keep &= ev["web_status"].reindex(fac["facility_id"]).isin(["confirmed_own_site"]).to_numpy()
+    if hide_review and "needs_review" in fac:
+        keep &= ~fac["needs_review"].fillna(False).astype(bool).to_numpy()
+
     def candidates(r):
-        has_ev = ev["evidence_score"].reindex(fac["facility_id"]).fillna(0).to_numpy() > 0
-        m = (dist <= r) & has_ev
+        m = (dist <= r) & keep
         return fac[m].assign(distance_km=dist[m])
 
     radius = radius_km
@@ -188,11 +194,15 @@ def explain(s: dict, rank: int | None, service: Service, loc: Location, half_lif
             "kind": "names the service" if it["kind"] == "strong" else "related term",
             "term": it["term"],
             "text": it["text"],
+            "url": it.get("url"),
         })
     ignored = [{"field": FIELD_LABEL[it["field"]], "text": it["text"]} for it in e["negated"][:3]]
     cautions = [fl["message"] for fl in s["trust_flags"]] + s["plaus_notes"]
     if not e["has_strong"]:
         cautions.append(f"The record never names {service.label.lower()} directly – only related terms.")
+    web_status = e.get("web_status") if hasattr(e, "get") else None
+    if web_status == "not_found_on_site":
+        cautions.append("Its own website was checked and does not mention this service (websites are often incomplete – call to confirm).")
     if s.get("duplicates"):
         cautions.append(f"{len(s['duplicates'])} near-identical record(s) for this facility were merged into this result.")
     where = s["location_basis"]
@@ -237,6 +247,11 @@ def explain(s: dict, rank: int | None, service: Service, loc: Location, half_lif
         "sources": list(s.get("source_urls_list") or [])[:5],
         "half_life_km": half_life,
         "vs_next": None,
+        "web_status": web_status if isinstance(web_status, str) else "not_checked",
+        "web_url": e.get("web_url") if hasattr(e, "get") and isinstance(e.get("web_url"), str) else None,
+        "web_checked_at": s.get("web_checked_at") if isinstance(s.get("web_checked_at"), str) else None,
+        "needs_review": bool(s.get("needs_review")),
+        "review_reasons": list(s.get("review_reasons") or []),
     }
 
 

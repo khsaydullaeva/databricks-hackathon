@@ -33,7 +33,7 @@ CANDIDATES: dict[str, list[str]] = {
     "num_doctors": ["numberDoctors", "number_doctors", "num_doctors", "doctors"],
     "capacity": ["capacity", "bed_capacity", "beds", "number_beds", "numberBeds"],
     "year_established": ["yearEstablished", "year_established", "established"],
-    "source_urls": ["source_urls", "source_url", "sourceUrls", "sourceUrl", "sources", "source"],
+    "source_urls": ["source_urls", "source_url", "sourceUrls", "sourceUrl", "sources"],
     "website": ["officialWebsite", "websites", "website", "official_website"],
     "phone": ["officialPhone", "phone_numbers", "phoneNumbers", "phone", "phone_number"],
     "email": ["email", "emails"],

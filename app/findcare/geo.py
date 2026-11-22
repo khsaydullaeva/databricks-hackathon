@@ -40,7 +40,15 @@ STATE_ALIASES = {
     "west bangal": "west bengal",
     "uttar pradesh up": "uttar pradesh",
     "up": "uttar pradesh",
+    "u p": "uttar pradesh",
     "mp": "madhya pradesh",
+    "m p": "madhya pradesh",
+    "ts": "telangana",
+    "tn": "tamil nadu",
+    "mh": "maharashtra",
+    "wb": "west bengal",
+    "hp": "himachal pradesh",
+    "jk": "jammu and kashmir",
 }
 
 PLACE_ALIASES = {
@@ -157,6 +165,7 @@ def build_pin_lookup(pins: pd.DataFrame) -> pd.DataFrame:
 
 def build_district_lookup(pins: pd.DataFrame) -> pd.DataFrame:
     keys = ["state_norm", "district_norm"]
+    pins = pins[(pins["district_norm"] != "") & (pins["state_norm"] != "")]
     centres = _trimmed_centers(pins, keys, trim_km=120.0)
     base = pins.groupby(keys).agg(district=("district", "first"), state=("statename", "first"),
                                   n_pins=("pincode", "nunique")).reset_index()
@@ -187,9 +196,12 @@ def build_place_index(pins: pd.DataFrame, district_lookup: pd.DataFrame, facilit
     if facilities is not None and len(facilities):
         f = facilities[facilities["coord_valid"] & (facilities["city_norm"] != "")]
         if len(f):
+            known_states = set(district_lookup["state_norm"])
+            f = f[f["state_norm"].isin(known_states)]  # 'state' fields sometimes hold a locality or abbreviation
+            mode = lambda s: s.dropna().value_counts().index[0] if s.notna().any() else None
             fg = f.groupby(["city_norm", "state_norm"]).agg(
                 lat=("latitude", "median"), lon=("longitude", "median"), support=("facility_id", "size"),
-                display=("city", "first"), state=("state", "first"), district_norm=("district_norm", "first"),
+                display=("city", "first"), state=("state", "first"), district_norm=("district_norm", mode),
             ).reset_index()
             fg = fg[fg["support"] >= 2]
             parts.append(pd.DataFrame({
@@ -317,8 +329,18 @@ def resolve_location(query: str, pin_lookup: pd.DataFrame, district_lookup: pd.D
         warnings.append(f"No exact match for '{parts[0]}'; using closest name '{close[0].title()}'.")
 
     cands = cands.assign(_p=cands["kind"].map(KIND_PRIORITY)).sort_values(["_p", "support"], ascending=[True, False])
-    # one candidate per state (+district) – those are the genuinely different places
-    distinct = cands.drop_duplicates(subset=["state_norm", "district_norm"]).head(8)
+    # Ambiguity only among places of comparable standing: a city/district named X beats a village
+    # post office named X elsewhere ("Jaipur" should not offer a branch office in another state).
+    best_p = cands["_p"].min()
+    cands = cands[cands["_p"] <= max(best_p, 1)]
+    # genuinely different places only: drop candidates within 25 km of a better-ranked one
+    kept = []
+    for r in cands.itertuples():
+        if all(haversine_km(r.lat, r.lon, k.lat, k.lon) > 25 for k in kept):
+            kept.append(r)
+        if len(kept) == 8:
+            break
+    distinct = cands.loc[[k.Index for k in kept]]
     distinct = distinct.sort_values(["support"], ascending=False) if distinct["state_norm"].nunique() > 1 else distinct
     alternatives = [{"display": r.display, "kind": r.kind, "lat": float(r.lat), "lon": float(r.lon),
                      "state_norm": r.state_norm, "district_norm": r.district_norm} for r in distinct.itertuples()]

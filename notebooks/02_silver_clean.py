@@ -6,7 +6,10 @@
 # MAGIC   PIN codes validated (6 digits, first digit 1–9; recovered from address text if the field is empty),
 # MAGIC   coordinates validated against India's bounding box (0,0 rejected), implausible numbers nulled
 # MAGIC   (beds 1–10,000; doctors 1–5,000; year 1800–2026), state names normalised (Orissa→Odisha …).
-# MAGIC * **PIN directory:** `NA` coordinates → NULL; out-of-India coordinates marked `geo_valid = false`.
+# MAGIC * **Malformed rows:** ~88 facility rows are fragments of broken multi-line CSV fields → `quarantine_facilities`.
+# MAGIC * **Extraction leftovers** in list fields ("Cancer?", "not specified", "explicitly stated in the text") are dropped and counted.
+# MAGIC * **PIN directory:** `NA` coordinates → NULL; 791 swapped lat/lon pairs repaired; placeholders like (1,1) rejected;
+# MAGIC   715 rows with state/district `NA` filled from other offices of the same PIN (or state from the postal circle).
 # MAGIC   Grain stays *post office* (we aggregate to PIN only in gold, with ambiguity stats).
 # MAGIC * **NFHS-5:** `*` → NULL (suppressed — never zero); `(29.5)` → 29.5 with `is_low_n = true`.
 # MAGIC   Stored wide (`silver_nfhs`) and long (`silver_nfhs_long`, one row per district × indicator).
@@ -20,7 +23,13 @@
 OVERRIDES = {}  # e.g. {"capacity": "bed_count"} if a field didn't resolve in notebook 01
 
 bronze_fac = read_pdf("bronze_facilities").drop(columns=["_ingested_at", "_source"], errors="ignore")
-silver_fac, mapping = pipeline.clean_facilities(bronze_fac, OVERRIDES)
+# ~88 rows are fragments of multi-line descriptions split by an upstream CSV error (text in the id column,
+# values shifted across columns). They are kept in a quarantine table, not loaded as facilities.
+good_fac, bad_fac = pipeline.quarantine_malformed(bronze_fac, OVERRIDES)
+print(f"quarantined {len(bad_fac)} malformed rows of {len(bronze_fac)}")
+if len(bad_fac):
+    write_pdf(bad_fac.astype(str), "quarantine_facilities", "Malformed facility rows (CSV fragments) excluded from silver.")
+silver_fac, mapping = pipeline.clean_facilities(good_fac, OVERRIDES)
 print(columns.describe(mapping))
 write_pdf(silver_fac, "silver_facilities", "Cleaned Virtue Foundation facilities (canonical columns, parsed lists).")
 

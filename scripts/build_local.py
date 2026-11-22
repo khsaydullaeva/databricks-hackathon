@@ -26,18 +26,25 @@ def main():
     ap.add_argument("--facilities")
     ap.add_argument("--pincodes")
     ap.add_argument("--nfhs")
+    ap.add_argument("--web", help="folder with web_site_status.parquet / web_service_hits.parquet (scripts/verify_websites.py)")
     ap.add_argument("--out", default=os.path.join(ROOT, "local_data"))
     a = ap.parse_args()
     if a.synthetic:
         import synthetic
         fac_raw, pin_raw, nfhs_raw = synthetic.facilities(), synthetic.pincodes(), synthetic.nfhs()
     else:
-        read = lambda p: pd.read_csv(p, dtype=str, keep_default_na=False)
+        read = lambda p: pd.read_parquet(p) if p.endswith(".parquet") else pd.read_csv(p, dtype=str, keep_default_na=False)
         fac_raw, pin_raw, nfhs_raw = read(a.facilities), read(a.pincodes), read(a.nfhs)
+    fac_raw, bad = pipeline.quarantine_malformed(fac_raw)
+    print(f"quarantined {len(bad)} malformed facility rows")
     fac, mapping = pipeline.clean_facilities(fac_raw)
     pins = pipeline.clean_pincodes(pin_raw)
     wide, long, _ = clean_nfhs(nfhs_raw)
-    gold = pipeline.build_gold(fac, pins, wide)
+    ws = wh = None
+    if a.web:
+        ws = pd.read_parquet(os.path.join(a.web, "web_site_status.parquet"))
+        wh = pd.read_parquet(os.path.join(a.web, "web_service_hits.parquet"))
+    gold = pipeline.build_gold(fac, pins, wide, web_status=ws, web_hits=wh)
     gold["silver_nfhs_long"] = long
     os.makedirs(a.out, exist_ok=True)
     for name, df in gold.items():

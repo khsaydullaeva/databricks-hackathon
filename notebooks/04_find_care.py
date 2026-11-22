@@ -20,7 +20,7 @@ dbutils.widgets.text("location_choice", "", "If ambiguous: option number (0,1,2â
 # COMMAND ----------
 
 TABLES = ["gold_facilities", "gold_facility_service_evidence", "gold_pincode_lookup", "gold_district_lookup",
-          "gold_place_index", "gold_district_nfhs_map", "silver_nfhs_long"]
+          "gold_place_index", "gold_district_nfhs_map", "silver_nfhs_long", "gold_evidence_calibration"]
 rt = pipeline.Runtime.from_tables({t: read_pdf(t) for t in TABLES})
 print(f"{len(rt.facilities):,} facilities loaded")
 
@@ -38,7 +38,7 @@ else:
         for i, a in enumerate(loc.alternatives):
             print(f"  {i}: {a['display']} [{a['kind']}]")
     res = ranking.recommend(rt, svc, loc, radius_km=float(dbutils.widgets.get("radius_km")), top_k=int(dbutils.widgets.get("top_k")))
-    ctx = nfhs.district_context(rt.nfhs_long, rt.district_nfhs_map, loc.state_norm, loc.district_norm, svc.nfhs)
+    ctx = nfhs.district_context(rt.nfhs_long, rt.district_nfhs_map, loc.state_norm, loc.district_norm, svc.nfhs, service_id=svc.id)
     displayHTML(render.result_html(res, ctx))
 
 # COMMAND ----------

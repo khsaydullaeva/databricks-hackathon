@@ -30,6 +30,9 @@ FIELD_WEIGHT = {
     "name": 0.80,
     "description": 0.60,
     "specialties": 0.55,
+    # Independent of the directory record: the hospital's own website (fact-check, see webcheck.py)
+    "website": 1.00,
+    "website_chain": 0.40,  # a hospital group's site may describe another branch
 }
 FIELD_LABEL = {
     "procedure": "Procedures list",
@@ -38,6 +41,8 @@ FIELD_LABEL = {
     "name": "Facility name",
     "description": "Description text",
     "specialties": "Specialties list",
+    "website": "Hospital's own website",
+    "website_chain": "Hospital group's website (may describe another branch)",
 }
 KIND_WEIGHT = {"strong": 1.0, "support": 0.35}
 PER_FIELD_CAP = 0.75

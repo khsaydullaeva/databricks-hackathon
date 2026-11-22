@@ -88,10 +88,16 @@ sources = {
     "pincode": dbutils.widgets.get("pincode_source").strip(),
     "nfhs": dbutils.widgets.get("nfhs_source").strip(),
 }
+# Default names when installed from Marketplace (the catalog name is chosen at install time)
+KNOWN = {
+    "facility": "databricks_virtue_foundation_dataset_dais_2026.virtue_foundation_dataset.facilities",
+    "pincode": "databricks_virtue_foundation_dataset_dais_2026.virtue_foundation_dataset.india_post_pincode_directory",
+    "nfhs": "databricks_virtue_foundation_dataset_dais_2026.virtue_foundation_dataset.nfhs_5_district_health_indicators",
+}
 if not all(sources.values()):
     auto = {**discover_files(), **discover_tables()}
     for k in sources:
-        sources[k] = sources[k] or auto.get(k, "")
+        sources[k] = sources[k] or auto.get(k, "") or (KNOWN[k] if spark.catalog.tableExists(KNOWN[k]) else "")
 for k, v in sources.items():
     print(f"{k:9s} -> {v or 'NOT FOUND – set the widget'}")
 assert all(sources.values()), "Set the missing source widget(s) above and re-run."

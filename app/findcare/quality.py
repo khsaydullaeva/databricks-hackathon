@@ -36,8 +36,12 @@ def _flag(code: str, message: str) -> dict:
     return {"code": code, "message": message, "penalty": PENALTY.get(code, 0.0)}
 
 
-def assess(fac: pd.DataFrame, pin_lookup: pd.DataFrame, district_lookup: pd.DataFrame) -> pd.DataFrame:
-    """Add effective location, district assignment and trust flags to silver facilities."""
+def assess(fac: pd.DataFrame, pin_lookup: pd.DataFrame, district_lookup: pd.DataFrame,
+           places: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Add effective location, district assignment and trust flags to silver facilities.
+
+    `places` (district + post-office centres, see geo.build_place_index) lets coordinate/postcode
+    conflicts be settled by the record's own city name."""
     f = fac.copy()
     pl = pin_lookup.set_index("pincode")
     f = f.join(pl[["lat", "lon", "district", "state", "district_norm", "state_norm", "is_ambiguous", "spread_km"]]
@@ -49,19 +53,39 @@ def assess(fac: pd.DataFrame, pin_lookup: pd.DataFrame, district_lookup: pd.Data
                                                          f["pin_lat"].fillna(0), f["pin_lon"].fillna(0)), np.nan)
 
     # --- conflict resolution: coordinates vs postcode -----------------------------
-    # When they disagree by > COORD_PIN_MAX_KM, let the record's own city/state text vote:
-    # whichever location agrees with more of {city, state} wins; ties keep the coordinates.
+    # 1) If the record's city can be located (district or post-office name in its state), use whichever
+    #    of {coordinates, postcode centre} is closer to that city.
+    # 2) Otherwise let the city/state text vote; ties keep the coordinates.
     conflict = (f["coord_pin_km"] > COORD_PIN_MAX_KM) & (f["pin_spread_km"].fillna(0) < COORD_PIN_MAX_KM)
     f["use_pin_over_coords"] = False
+    f["conflict_basis"] = None
+    if conflict.any() and places is not None and len(places):
+        p = places[places["kind"].isin(["district", "office_major", "office"])].dropna(subset=["lat", "lon"])
+        p = p.assign(_p=p["kind"].map({"district": 0, "office_major": 1, "office": 2})).sort_values(["_p", "support"], ascending=[True, False])
+        centres = p.drop_duplicates(["name_norm", "state_norm"]).set_index(["name_norm", "state_norm"])[["lat", "lon"]]
+        for i in f.index[conflict]:
+            r = f.loc[i]
+            key = next((k for k in ((r["city_norm"], r["state_norm"]), (r["city_norm"], r["pin_state_norm"])) if k in centres.index), None)
+            if not r["city_norm"] or key is None:
+                continue
+            clat, clon = centres.loc[key, ["lat", "lon"]]
+            d_coords = float(haversine_km(r["latitude"], r["longitude"], clat, clon))
+            d_pin = float(haversine_km(r["pin_lat"], r["pin_lon"], clat, clon))
+            f.at[i, "use_pin_over_coords"] = d_pin < d_coords
+            f.at[i, "conflict_basis"] = (f"the postcode is {d_pin:.0f} km and the coordinates {d_coords:.0f} km from "
+                                         f"{str(r['city']).title()}, the city named in the record")
+    rest = conflict & f["conflict_basis"].isna()
     dl0 = district_lookup.dropna(subset=["lat", "lon"]).reset_index(drop=True)
-    if conflict.any() and len(dl0):
-        idx = _nearest_idx(f.loc[conflict, "latitude"].to_numpy(), f.loc[conflict, "longitude"].to_numpy(),
+    if rest.any() and len(dl0):
+        idx = _nearest_idx(f.loc[rest, "latitude"].to_numpy(), f.loc[rest, "longitude"].to_numpy(),
                            dl0["lat"].to_numpy(), dl0["lon"].to_numpy())
-        c = f.loc[conflict]
+        c = f.loc[rest]
         c_state, c_dist = dl0.loc[idx, "state_norm"].to_numpy(), dl0.loc[idx, "district_norm"].to_numpy()
         vote_pin = (c["state_norm"] == c["pin_state_norm"]).astype(int) + (c["city_norm"] == c["pin_district_norm"]).astype(int)
         vote_coords = (c["state_norm"].to_numpy() == c_state).astype(int) + (c["city_norm"].to_numpy() == c_dist).astype(int)
-        f.loc[conflict, "use_pin_over_coords"] = (vote_pin.to_numpy() > vote_coords)
+        f.loc[rest, "use_pin_over_coords"] = (vote_pin.to_numpy() > vote_coords)
+        f.loc[rest, "conflict_basis"] = "the record's city/state text agrees better with " + np.where(
+            vote_pin.to_numpy() > vote_coords, "the postcode", "the coordinates (or neither)")
 
     # --- effective location used for distance -----------------------------------
     use_coords = f["coord_valid"] & ~f["use_pin_over_coords"]
@@ -93,6 +117,7 @@ def assess(fac: pd.DataFrame, pin_lookup: pd.DataFrame, district_lookup: pd.Data
     # --- duplicate records (same name, within 2 km) --------------------------------
     f["dup_group"] = _duplicate_groups(f)
 
+    known_states = set(pin_lookup["state_norm"].dropna()) - {""}  # record 'state' fields sometimes hold a locality
     flags_col, trust_col, completeness_col = [], [], []
     for r in f.itertuples(index=False):
         flags = []
@@ -101,10 +126,11 @@ def assess(fac: pd.DataFrame, pin_lookup: pd.DataFrame, district_lookup: pd.Data
         elif r.location_basis == "postcode centre (approximate)":
             flags.append(_flag("approx_location", f"No valid coordinates; location approximated from postcode {r.postcode}."))
         if pd.notna(r.coord_pin_km) and r.coord_pin_km > COORD_PIN_MAX_KM and (pd.isna(r.pin_spread_km) or r.pin_spread_km < COORD_PIN_MAX_KM):
-            which = ("The postcode agrees with the record's city/state, so the postcode location is used."
-                     if r.use_pin_over_coords else "The coordinates are used, but the true location is uncertain.")
+            which = (f"Using the postcode location: {r.conflict_basis}." if r.use_pin_over_coords
+                     else f"Using the coordinates ({r.conflict_basis}), but the true location is uncertain." if r.conflict_basis
+                     else "Using the coordinates, but the true location is uncertain.")
             flags.append(_flag("coords_vs_pin", f"Coordinates are {r.coord_pin_km:.0f} km from the centre of its postcode {r.postcode} – one of them is wrong. {which}"))
-        if r.state_norm and isinstance(r.pin_state_norm, str) and r.state_norm != r.pin_state_norm:
+        if r.state_norm in known_states and isinstance(r.pin_state_norm, str) and r.pin_state_norm and r.state_norm != r.pin_state_norm:
             flags.append(_flag("state_mismatch", f"Record says state '{r.state}', but postcode {r.postcode} belongs to {str(r.pin_state).title()}."))
         if r.n_shared_coords >= 4:
             flags.append(_flag("shared_coords", f"{r.n_shared_coords - 1} other facilities share the exact same coordinates – likely a city-level geocode, not the building."))
@@ -134,7 +160,9 @@ def apply_breadth_flag(f: pd.DataFrame, n_strong_services: pd.Series, n_services
     f["n_services_claimed"] = counts
     threshold = max(10, int(np.ceil(0.65 * n_services)))
     small_or_unknown = f["capacity"].isna() | (f["capacity"] < 50)
-    hit = (counts >= threshold) & small_or_unknown
+    # teaching hospitals legitimately offer most services
+    teaching = f["name"].fillna("").str.contains(r"medical college|aiims|institute of medical sciences|pgimer|medical sciences", case=False, regex=True)
+    hit = (counts >= threshold) & small_or_unknown & ~teaching
     for i in f.index[hit]:
         fl = _flag("breadth_outlier", f"Claims {counts[i]} of {n_services} service types with no recorded bed count of 50+ – may be a generic or merged listing.")
         f.at[i, "trust_flags"] = list(f.at[i, "trust_flags"]) + [fl]

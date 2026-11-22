@@ -13,10 +13,30 @@ def _badge(level: str) -> str:
             f'font-weight:600">{escape(level)} evidence</span>')
 
 
+WEB_TEXT = {
+    "confirmed_own_site": ("#1a7f37", "✔ Confirmed on the hospital's own website"),
+    "mentioned_group_site": ("#0969da", "Mentioned on the hospital group's website (may be another branch)"),
+    "not_found_on_site": ("#6e7781", "✖ Not found on the hospital's website (sites are often incomplete)"),
+    "site_unreachable": ("#6e7781", "Hospital website could not be reached"),
+}
+
+
+def _web(r: dict) -> str:
+    out = ""
+    if r.get("web_status") in WEB_TEXT:
+        c, t = WEB_TEXT[r["web_status"]]
+        link = f" · <a href='{escape(r['web_url'])}' target='_blank'>open page</a>" if r.get("web_url") else ""
+        out += f"<div style='color:{c};font-weight:600;margin-bottom:4px'>{escape(t)}{link}</div>"
+    if r.get("needs_review"):
+        out += "<div style='color:#9a6700;font-weight:600;margin-bottom:4px'>⚑ Record needs review</div>"
+    return out
+
+
 def card(r: dict) -> str:
     rank = f"{r['rank']}. " if r["rank"] else ""
     cites = "".join(
-        f"<li><b>{escape(c['field'])}</b> <span style='color:#666'>({escape(c['kind'])})</span>: “{escape(c['text'])}”</li>"
+        f"<li><b>{escape(c['field'])}</b> <span style='color:#666'>({escape(c['kind'])})</span>: “{escape(c['text'])}”"
+        + (f" <a href='{escape(c['url'])}' target='_blank'>source</a>" if c.get("url") else "") + "</li>"
         for c in r["citations"])
     cautions = "".join(f"<li>{escape(c)}</li>" for c in r["cautions"])
     ignored = "".join(f"<li><b>{escape(i['field'])}</b>: “{escape(i['text'])}”</li>" for i in r["ignored_mentions"])
@@ -34,6 +54,7 @@ def card(r: dict) -> str:
   </div>
   <div style="color:#444;margin:4px 0 8px">{r['distance_km']:.1f} km ({escape(r['location_basis'])}) · {escape(r['address'] or '')}
     {(' · 📞 ' + escape(r['phone'])) if r.get('phone') else ''}</div>
+  {_web(r)}
   <div><b>Why:</b> {escape(r['why'])}</div>
   {'<div style="margin-top:6px"><b>Evidence from the record</b><ul style="margin:4px 0">' + cites + '</ul></div>' if cites else ''}
   {'<div style="background:#fff8c5;border-radius:6px;padding:6px 10px;margin-top:6px"><b>Cautions</b><ul style="margin:4px 0">' + cautions + '</ul></div>' if cautions else ''}

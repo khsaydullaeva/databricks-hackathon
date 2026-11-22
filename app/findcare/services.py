@@ -202,9 +202,10 @@ SERVICES: list[Service] = [
         advice="Register early for antenatal visits; ask whether the facility handles complications or refers out.",
     ),
     Service(
-        "transplant", "Organ transplant",
+        "transplant", "Organ transplant (kidney, liver, heart, bone marrow)",
         ("transplant", "kidney transplant", "liver transplant", "organ transplant"),
-        strong=(r"\b(?:kidney|renal|liver|heart|bone marrow|organ|cornea[l]?) transplant", r"\btransplant(?:ation)? (?:unit|centre|center|surg|program)"),
+        strong=(r"\b(?:kidney|renal|liver|heart|lung|pancreas|bone marrow|stem cell|organ) transplant",
+                r"\b(?<!corneal )(?<!cornea )(?<!hair )transplant(?:ation)? (?:unit|centre|center|surg|program)"),
         support=(r"\bnephrolog", r"\bhepatolog"),
         urgency="elective", tier="tertiary",
         advice="Transplants require a licensed centre: ask for their transplant authorisation and waiting list.",
@@ -212,7 +213,8 @@ SERVICES: list[Service] = [
     Service(
         "cataract", "Eye care / cataract surgery",
         ("cataract", "eye surgery", "ophthalmology", "eye hospital", "eye care"),
-        strong=(r"\bcataract", r"\bphaco", r"\bophthalm", r"\beye (?:surg|hospital|care|clinic)", r"\blasik\b", r"\bretina"),
+        strong=(r"\bcataract", r"\bphaco", r"\bophthalm", r"\beye (?:surg|hospital|care|clinic)", r"\blasik\b", r"\bretina",
+                r"\bcornea[l]? transplant", r"\bkeratoplast"),
         support=(r"\boptometr", r"\bvision\b"),
         urgency="elective", tier="secondary",
         advice="Ask whether surgery is done on-site and about camp/free schemes.",
@@ -271,7 +273,9 @@ EMERGENCY_24X7_RE = re.compile(
 # Negation / not-actually-available cues around a match (checked in a short window)
 NEGATION_BEFORE_RE = re.compile(
     r"\b(?:no|not|without|lacks?|lacking|absence of|refer(?:s|red)? (?:out|to|for)|planned|upcoming|proposed|"
-    r"coming soon|under construction|will (?:soon )?(?:start|open|have)|future)\b(?:\W+\w+){0,3}\W*$"
+    r"coming soon|under construction|will (?:soon )?(?:start|open|have|include|add|launch|introduce)|future|"
+    r"plans? to (?:add|start|open|launch|introduce|set up|establish)|phase (?:ii|2|iii|3)|to be (?:added|started|set up))\b"
+    r"(?:\W+\w+){0,4}\W*$"
 )
 NEGATION_AFTER_RE = re.compile(
     r"^\W*(?:\w+\W+){0,3}?(?:not available|unavailable|coming soon|planned|under construction|is not (?:offered|provided)|referred (?:out|to))"

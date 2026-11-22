@@ -183,3 +183,170 @@ def test_render_html(rt):
     res = recommend(rt, SERVICES_BY_ID["dialysis"], loc)
     html = result_html(res, {"ok": False, "note": "n/a"})
     assert "Jaipur Kidney Care Hospital" in html and "Performs hemodialysis" in html
+
+
+# ---------------------------------------------------------------- real-data quirks (found in the Marketplace tables)
+def test_quarantine_malformed_rows():
+    import uuid
+
+    good = [{"unique_id": str(uuid.uuid4()), "name": f"H{i}", "organization_type": "facility"} for i in range(30)]
+    bad = [{"unique_id": "Mobile: +91-98xxxx", "name": " and accountability", "organization_type": " Doctor couple"}]
+    ok, q = pipeline.quarantine_malformed(pd.DataFrame(good + bad))
+    assert len(ok) == 30 and len(q) == 1
+
+
+def test_extraction_artifacts_dropped():
+    raw = synthetic.facilities().head(1).copy()
+    raw["capability"] = '["Cancer?", "Neonatal care not specified", "Has ICU", "Provides emergency services only if explicitly stated in the text"]'
+    fac, _ = pipeline.clean_facilities(raw)
+    assert fac.loc[0, "capability_list"] == ["Has ICU"] and fac.loc[0, "n_artifacts_capability"] == 3
+
+
+def test_future_and_planned_mentions_ignored():
+    r = SERVICES_BY_ID["radiotherapy"]
+    for text in ("Phase II will include TrueBeam radiation therapy system", "Plans to add a radiation oncology program"):
+        e = facility_evidence({"name": "X", "equipment_list": [text]}, r)
+        assert e["evidence_score"] == 0 and e["negated"], text
+
+
+def test_corneal_transplant_is_eye_care_not_organ_transplant():
+    e = facility_evidence({"name": "X", "procedure_list": ["Corneal transplant (keratoplasty)"]}, SERVICES_BY_ID["transplant"])
+    assert not e["has_strong"]
+    e = facility_evidence({"name": "X", "procedure_list": ["Corneal transplant (keratoplasty)"]}, SERVICES_BY_ID["cataract"])
+    assert e["has_strong"]
+    assert not facility_evidence({"name": "X", "procedure_list": ["Revision Hair Transplant Surgery"]}, SERVICES_BY_ID["transplant"])["has_strong"]
+
+
+def test_pin_directory_repairs():
+    raw = synthetic.pincodes()
+    extra = pd.DataFrame([
+        # swapped lat/lon
+        ("Bihar", "Patna", "Patna", "Swapped S.O", 800001, "PO", "Delivery", "PATNA", "BIHAR", "85.14", "25.61"),
+        # 'NA' admin fields -> filled from same PIN
+        ("Bihar", "Patna", "Patna", "Unknown B.O", 800001, "BO", "Delivery", "NA", "NA", "25.60", "85.13"),
+    ] + [  # same-name geocoding cluster: Bihar offices carrying Aurangabad (Maharashtra) coordinates
+        ("Bihar", "Gaya", "Aurangabad", f"Wrong {i} BO", 824101 + (i % 3), "BO", "Delivery", "AURANGABAD", "BIHAR", "19.87617", "75.343313")
+        for i in range(6)
+    ], columns=raw.columns)
+    p = pipeline.clean_pincodes(pd.concat([raw, extra], ignore_index=True))
+    sw = p[p["officename"] == "Swapped S.O"].iloc[0]
+    assert sw["geo_valid"] and abs(sw["latitude"] - 25.61) < 1e-9
+    na = p[p["officename"] == "Unknown B.O"].iloc[0]
+    assert na["district"] == "PATNA" and na["statename"] == "BIHAR"
+    wrong = p[p["officename"].str.startswith("Wrong")]
+    assert not wrong["geo_valid"].any()
+    from findcare.geo import build_district_lookup
+
+    a = build_district_lookup(p).set_index(["state_norm", "district_norm"]).loc[("bihar", "aurangabad")]
+    assert abs(a["lat"] - 24.75) < 0.1  # not dragged to Maharashtra
+
+
+def test_district_rename_alias():
+    from findcare.nfhs import match_districts
+
+    nf = pd.DataFrame({"state_norm": ["haryana"], "district_norm": ["mewat"], "district": ["Mewat"], "state": ["Haryana"]})
+    dl = pd.DataFrame({"state_norm": ["haryana"], "district_norm": ["nuh"]})
+    m = match_districts(nf, dl).iloc[0]
+    assert m["nfhs_district_norm"] == "mewat" and m["match_method"] == "known_rename"
+
+
+def test_nfhs_curated_indicators_for_abbreviated_columns():
+    raw = pd.DataFrame({
+        "district_name": ["Patna "], "state_ut": ["Bihar"],
+        "births_delivered_by_csection_5y_pct": [12.0], "institutional_birth_5y_pct": ["(81.5)"],
+        "hh_member_covered_health_insurance_pct": ["*"], "hh_electricity_pct": [99.0],
+    })
+    wide, long, _ = clean_nfhs(raw)
+    dmap = pd.DataFrame({"state_norm": ["bihar"], "district_norm": ["patna"], "nfhs_state_norm": ["bihar"],
+                         "nfhs_district_norm": ["patna"], "match_method": ["exact"], "match_score": [1.0]})
+    ctx = district_context(long, dmap, "bihar", "patna", (), service_id="emergency_csection")
+    labels = [r["indicator"] for r in ctx["rows"]]
+    assert labels[0] == "Births in a health facility (%)" and "Births delivered by C-section (%)" in labels
+    assert "Households with electricity (%)" not in labels  # not relevant to C-section
+    ins = [r for r in ctx["rows"] if "insurance" in r["indicator"]][0]
+    assert ins["value"] is None and "suppressed" in ins["caution"]
+
+
+def test_locality_in_state_field_is_not_a_contradiction():
+    raw = synthetic.facilities()
+    raw.loc[raw["pk_unique_id"] == "F2", "address_stateOrRegion"] = "Sikandra"
+    fac, _ = pipeline.clean_facilities(raw)
+    g = pipeline.build_gold(fac, pipeline.clean_pincodes(synthetic.pincodes()), None, log=lambda *_: None)
+    f = g["gold_facilities"].set_index("facility_id")
+    assert "state_mismatch" not in {x["code"] for x in f.loc["F2", "trust_flags"]}
+    assert "state_mismatch" in {x["code"] for x in f.loc["F12", "trust_flags"]}  # a real state that disagrees still flags
+
+
+# ---------------------------------------------------------------- website fact-check
+def test_find_services_on_web_pages():
+    from findcare.webcheck import find_services, site_of, is_directory
+
+    pages = [{"url": "https://h.example/services", "text": "Home\nMedicine Delivery\n24x7 Dialysis Unit with 10 machines\n"
+                                                             "We do not have a NICU at present.\nA Mother's NICU Journey"}]
+    got = {h["service_id"]: h for h in find_services(pages)}
+    assert "dialysis" in got and got["dialysis"]["page_url"].endswith("/services")
+    assert "maternity" not in got  # 'Medicine Delivery' is not childbirth
+    assert "nicu" not in got  # negated, and blog-story titles are ignored
+    assert site_of('["esic.nic.in"]') == ("http://esic.nic.in", "esic.nic.in")
+    assert is_directory("xyz.business.site") and not is_directory(float("nan"))
+
+
+def _gold_with_web():
+    fac, _ = pipeline.clean_facilities(synthetic.facilities())
+    pins = pipeline.clean_pincodes(synthetic.pincodes())
+    status = pd.DataFrame([
+        {"facility_id": "F1", "domain": "jkc.example", "site_kind": "own", "web_status": "ok", "fetched_at": "2026-11-21T10:00:00+00:00"},
+        {"facility_id": "F2", "domain": "nephro.example", "site_kind": "own", "web_status": "ok", "fetched_at": "2026-11-21T10:00:00+00:00"},
+        {"facility_id": "F4", "domain": "sawai.example", "site_kind": "own", "web_status": "ok", "fetched_at": "2026-11-21T10:00:00+00:00"},
+        {"facility_id": "F3", "domain": "pink.example", "site_kind": "own", "web_status": "unreachable"},
+    ])
+    hits = pd.DataFrame([
+        {"facility_id": "F1", "service_id": "dialysis", "site_kind": "own", "term": "dialysis", "quote": "Dialysis unit open 24x7",
+         "page_url": "https://jkc.example/services", "fetched_at": "2026-11-21T10:00:00+00:00"},
+        {"facility_id": "F2", "service_id": "dialysis", "site_kind": "own", "term": "hemodialysis", "quote": "Hemodialysis available",
+         "page_url": "https://nephro.example/", "fetched_at": "2026-11-21T10:00:00+00:00"},
+    ])
+    return pipeline.build_gold(fac, pins, None, log=lambda *_: None, web_status=status, web_hits=hits)
+
+
+def test_web_confirmation_raises_evidence_and_is_cited():
+    g = _gold_with_web()
+    ev = g["gold_facility_service_evidence"]
+    d = ev[ev["service_id"] == "dialysis"].set_index("facility_id")
+    assert d.loc["F1", "web_status"] == "confirmed_own_site" and d.loc["F1", "level"] == "Strong"
+    # record only had 'nephrology' (Indirect); its own website names hemodialysis -> now a real claim
+    assert d.loc["F2", "level"] == "Moderate" and any(i["field"] == "website" for i in d.loc["F2", "items"])
+    assert d.loc["F4", "web_status"] == "not_found_on_site"
+    rt_ = pipeline.Runtime.from_tables({k: pipeline.to_storable(v) for k, v in g.items()})
+    loc = resolve_location("Jaipur", rt_.pin_lookup, rt_.district_lookup, rt_.place_index)
+    res = recommend(rt_, SERVICES_BY_ID["dialysis"], loc)
+    top = res.recommendations[0]
+    assert top["web_status"] == "confirmed_own_site" and top["web_url"] == "https://jkc.example/services"
+    assert any(c.get("url") == "https://jkc.example/services" for c in top["citations"])
+    sawai = [r for r in res.recommendations if r["name"] == "Sawai Multispeciality"][0]
+    assert any("does not mention this service" in c for c in sawai["cautions"])
+    only = recommend(rt_, SERVICES_BY_ID["dialysis"], loc, only_confirmed=True)
+    assert {r["web_status"] for r in only.recommendations} == {"confirmed_own_site"}
+
+
+def test_review_queue_separates_untrustworthy_records():
+    g = _gold_with_web()
+    f = g["gold_facilities"].set_index("facility_id")
+    assert f.loc["F4", "needs_review"]  # coordinates contradict postcode (+ site doesn't mention its claim)
+    assert f.loc["F12", "needs_review"]  # state contradicts postcode
+    assert not f.loc["F1", "needs_review"]
+    q = g["gold_review_queue"]
+    assert {"F4", "F12"} <= set(q["facility_id"]) and q["review_priority"].is_monotonic_decreasing
+    rt_ = pipeline.Runtime.from_tables({k: pipeline.to_storable(v) for k, v in g.items()})
+    loc = resolve_location("Jaipur", rt_.pin_lookup, rt_.district_lookup, rt_.place_index)
+    names = [r["name"] for r in recommend(rt_, SERVICES_BY_ID["dialysis"], loc, hide_review=True).recommendations]
+    assert "Sawai Multispeciality" not in names
+
+
+def test_patient_education_text_is_not_a_confirmation():
+    from findcare.webcheck import find_services
+
+    edu = [{"url": "u", "text": "Some of the common cardiac surgeries include heart transplants, heart valve repairs, angioplasty and bypass grafting for patients."}]
+    assert not any(h["service_id"] == "transplant" for h in find_services(edu))
+    offer = [{"url": "u", "text": "Our hospital provides kidney transplant surgery with a dedicated transplant team and modern ICU support for recovery."}]
+    assert any(h["service_id"] == "transplant" for h in find_services(offer))
